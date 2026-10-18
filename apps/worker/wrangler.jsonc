@@ -1,6 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "devday-hackathon-2026",
+  "account_id": "9d0172593244e79ac489839342f65d9d",
+  "workers_dev": true,
   "main": "src/index.ts",
   "compatibility_date": "2026-10-18",
   "compatibility_flags": ["nodejs_compat"],

@@ -32,9 +32,14 @@ dev-worker:
 build-worker:
     pnpm build
 
-# ログイン中の Cloudflare アカウントへ Worker をデプロイする
+# wrangler.jsonc の公開先へゲームと Worker をデプロイする
 deploy-worker:
     pnpm run deploy
+
+# .dev.vars のシークレットと Worker を同時にデプロイする
+deploy-worker-with-secrets:
+    pnpm --filter @devday/game build
+    pnpm --filter @devday/worker run deploy --secrets-file .dev.vars
 
 # Blender CLI で部屋と小物の GLB モデルを再生成する
 build-models blender='blender':

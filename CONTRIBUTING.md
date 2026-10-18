@@ -115,6 +115,21 @@ pnpm --filter <package-name> <script-name>
 
 ## Cloudflare Workers
 
+### 公開設定の管理（Wrangler JSONC）
+
+`apps/worker/wrangler.jsonc` を公開設定の単一の管理元とします。
+Worker 名、Cloudflare アカウント ID、`workers.dev` への公開、静的アセットの配信、
+`/api/*` のルーティング、互換性設定、ログ・トレース、必須シークレット名を宣言しています。
+設定変更はこのファイルを編集してデプロイし、ダッシュボードだけで変更しないでください。
+
+公開先は `account_id` で指定したアカウントです。別アカウントへ公開する場合は
+この値を変更してください。Account ID は公開可能な識別子で、API トークンではありません。
+API キーの値は設定ファイルに含めず、Cloudflare Secrets に登録します。
+
+公開 URL: <https://devday-hackathon-2026.devday-worker.workers.dev>
+
+### ローカル開発とビルド
+
 [Wrangler のローカル開発](https://developers.cloudflare.com/workers/local-development/)を使います。
 
 ```sh
@@ -136,6 +151,37 @@ just build-worker
 `pnpm --filter @devday/worker exec wrangler login` で認証し、対象アカウントを確認した後に
 `just deploy-worker` を実行します。
 
+### 新しい worktree からのデプロイ
+
+worktree はブランチのコミット済みファイルから作られます。
+元の作業ツリーの未コミット変更、依存パッケージ、`.dev.vars` は引き継がれません。
+新しい worktree のルートで `just install-deps` を実行してください。
+
+```sh
+pnpm --filter @devday/worker exec wrangler whoami
+just build-worker
+```
+
+`whoami` のアカウント一覧に `wrangler.jsonc` の `account_id` が含まれることを確認します。
+Worker 名は `apps/worker/wrangler.jsonc` の `name`（`devday-hackathon-2026`）です。
+別の worktree でも同じアカウント・Worker 名なら同じ公開先を更新します。
+
+初回は下の「API キー」の手順で、この worktree の `apps/worker/.dev.vars` に
+有効な `OPENAI_API_KEY` を設定してから実行します。
+
+```sh
+just deploy-worker-with-secrets
+```
+
+このコマンドはフロントエンドをビルドし、コードと `.dev.vars` 内のシークレットを
+[同時にアップロード](https://developers.cloudflare.com/workers/configuration/secrets/#upload-secrets-alongside-code)します。
+`secrets.required` で必須キーを宣言しているため、初回からキーを登録する必要があります。
+登録済みのキーを更新しない通常のデプロイは `just deploy-worker` を使います。
+いずれも実際に Cloudflare へ公開するコマンドです。
+
+成功時に Wrangler が表示する HTTPS URL と、その URL の `/api/health` を開き、
+ゲームの表示と `{"status":"ok"}` の応答を確認してください。
+
 Worker の実行環境とバインディングの型は `wrangler types` で生成します。
 型チェック時にも再生成するため、生成ファイルは Git 管理に含めません。
 Worker の生成型と Node.js 型のグローバル宣言が重複するため、Worker の tsconfig では
@@ -154,7 +200,10 @@ cp apps/worker/.dev.vars.example apps/worker/.dev.vars
 キーをチャット・Issue・PR・ブラウザの入力欄や `VITE_` 変数へ貼り付けません。
 `.env`・`.env.*`・`.dev.vars`・`.dev.vars.*` は各階層で Git から除外し、
 値を含まない `.env.example` と `.dev.vars.example` だけを共有します。
-本番のキーはローカルから自動送信されません。対象 Worker を確認して登録します。
+通常の `just deploy-worker` では本番のキーはローカルから自動送信されません。
+初回は `just deploy-worker-with-secrets` でコードと一緒に登録します。
+登録済みの本番キーだけを更新する場合は、対象 Worker を確認して次を実行します。
+`secret put` は新しいバージョンを作成し、直ちにデプロイします。
 
 ```sh
 pnpm --filter @devday/worker exec wrangler secret put OPENAI_API_KEY

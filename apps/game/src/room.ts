@@ -477,7 +477,7 @@ export class Room {
     origin.position.copy(target);
     origin.rotation.copy(object.rotation);
     item.placed = true;
-    this.resident?.walkTo(point);
+    this.resident?.stop();
     this.selected = null;
     this.ring.visible = false;
     this.emit();

@@ -9,9 +9,10 @@
     "lint": "oxlint --deny-warnings .",
     "typecheck": "pnpm --recursive --if-present run typecheck",
     "tsx": "tsx",
-    "dev": "pnpm --filter @devday/worker dev",
-    "build": "pnpm --filter @devday/worker build",
-    "deploy": "pnpm --filter @devday/worker run deploy",
+    "test": "vitest run",
+    "dev": "pnpm --filter @devday/game build && pnpm --parallel --filter @devday/game --filter @devday/worker run dev",
+    "build": "pnpm --filter @devday/game build && pnpm --filter @devday/worker build",
+    "deploy": "pnpm --filter @devday/game build && pnpm --filter @devday/worker run deploy",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck"
   },
   "devDependencies": {
@@ -19,7 +20,8 @@
     "oxfmt": "0.73.0",
     "oxlint": "1.88.0",
     "tsx": "4.23.15",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
   },
   "engines": {
     "node": ">=24 <25",

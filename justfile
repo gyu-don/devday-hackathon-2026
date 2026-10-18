@@ -35,3 +35,11 @@ build-worker:
 # ログイン中の Cloudflare アカウントへ Worker をデプロイする
 deploy-worker:
     pnpm run deploy
+
+# Blender CLI で部屋と小物の GLB モデルを再生成する
+build-models blender='blender':
+    {{ quote(blender) }} --background --python-exit-code 1 --python scripts/build-room.py
+
+# 診断 API とプロコン入力のテストを実行する
+test-game:
+    pnpm test

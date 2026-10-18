@@ -9,6 +9,10 @@
     "generate:types": "wrangler types",
     "typecheck": "pnpm generate:types && tsc --noEmit"
   },
+  "dependencies": {
+    "@devday/contracts": "workspace:*",
+    "zod": "4.6.7"
+  },
   "devDependencies": {
     "@types/node": "24.19.2",
     "wrangler": "4.151.1"

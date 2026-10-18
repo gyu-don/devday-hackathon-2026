@@ -9,8 +9,13 @@
   "assets": {
     "directory": "../game/dist",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"],
+    "run_worker_first": ["/api/*", "/mcp"],
   },
+  "durable_objects": {
+    "bindings": [{ "name": "GAME_EVENTS", "class_name": "GameEventStore" }],
+  },
+  "migrations": [{ "tag": "v1-game-events", "new_sqlite_classes": ["GameEventStore"] }],
+  "vars": { "MCP_CALLBACK_ORIGINS": "" },
   "secrets": { "required": ["OPENAI_API_KEY"] },
   "observability": {
     "enabled": true,

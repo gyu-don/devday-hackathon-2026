@@ -75,7 +75,7 @@ function json(data: unknown, status: number, requestId: string) {
   });
 }
 
-async function readBody(request: Request) {
+export async function readBody(request: Request) {
   const reader = request.body?.getReader();
   if (!reader) throw new Error("missing_body");
   const chunks: Uint8Array[] = [];

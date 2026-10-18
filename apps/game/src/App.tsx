@@ -3,6 +3,7 @@ import { Room } from "./room.ts";
 import { ProController } from "./pro-controller.ts";
 import { LiveJudge } from "./live-judge.ts";
 import { EnemyDirector } from "./enemy-director.ts";
+import { AutoPlayPanel } from "./AutoPlayPanel.tsx";
 import type { CSSProperties } from "react";
 import {
   assessmentSchema,
@@ -54,6 +55,7 @@ export function App() {
   const host = useRef<HTMLDivElement>(null);
   const room = useRef<Room | null>(null);
   const controller = useRef<ProController | null>(null);
+  const stopAuto = useRef<() => void>(() => {});
   const attemptRef = useRef<(point: Placement) => void>(() => {});
   const version = useRef(0);
   const [revision, setRevision] = useState(0);
@@ -381,8 +383,14 @@ export function App() {
     }
     setControllerConnecting(true);
     const device = new ProController(
-      (x, y, activate) => room.current?.aim(x, y, activate),
-      drop,
+      (x, y, activate) => {
+        if (activate) stopAuto.current();
+        room.current?.aim(x, y, activate);
+      },
+      () => {
+        stopAuto.current();
+        drop();
+      },
       (message, connected) => {
         setControllerMessage(message);
         setControllerConnected(connected);
@@ -392,6 +400,8 @@ export function App() {
         }
       },
       (x, y, z, finished) => {
+        const rotating = x !== 0 || y !== 0 || z !== 0;
+        if (rotating) stopAuto.current();
         room.current?.rotateSelected(x, y, z);
         if (finished) room.current?.finishRotation();
       },
@@ -471,6 +481,24 @@ export function App() {
           </aside>
         )}
 
+        <AutoPlayPanel
+          room={room}
+          ready={state.ready}
+          judging={judging}
+          assessedVersion={assessmentVersion}
+          version={version}
+          complete={complete}
+          stopRef={stopAuto}
+          onStart={() => {
+            setEnemyEnabled(false);
+            setLiveAI(true);
+            start();
+          }}
+          onAction={() => {
+            changeRef.current();
+            start();
+          }}
+        />
         <section className="enemy-card" aria-labelledby="enemy-title">
           <div className="enemy-heading">
             <h2 id="enemy-title">いたずらおばけ、ちらかし</h2>

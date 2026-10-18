@@ -45,3 +45,24 @@ export const enemyActionSchema = z.object({
 });
 export type EnemyAction = z.infer<typeof enemyActionSchema>;
 export type EnemySettings = z.infer<typeof enemySettingsSchema>;
+
+const placementSchema = z.object({
+  x: z.number().min(-4.4).max(4.4),
+  y: z.number().min(0).max(2.7),
+  z: z.number().min(-3.4).max(3.4),
+});
+export const autoMoveSchema = z.object({
+  id: z.string().min(1).max(100),
+  itemId: z.string().min(1).max(100),
+  description: z.string().min(1).max(400),
+  point: placementSchema,
+});
+export const autoRequestSchema = enemySettingsSchema.extend({
+  mode: z.enum(["decisions", "agents"]),
+  image: assessmentRequestSchema.shape.image,
+  moves: z.array(autoMoveSchema).min(1).max(200),
+  history: z.array(z.string().max(400)).max(10),
+});
+export const autoResultSchema = z.object({ action: z.string().min(1).max(100) });
+export type AutoMove = z.infer<typeof autoMoveSchema>;
+export type AutoRequest = z.infer<typeof autoRequestSchema>;

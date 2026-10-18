@@ -1557,3 +1557,51 @@ h1 {
     grid-column: 1/-1;
   }
 }
+
+.autoplay-card {
+  padding: 20px;
+  margin-bottom: 18px;
+  border: 1px solid #cbd9bd;
+  border-radius: 16px;
+  background: #eaf0df;
+}
+.autoplay-card h2 {
+  font-size: 16px;
+}
+.autoplay-card label {
+  display: block;
+  font-size: 12px;
+  margin-top: 12px;
+}
+.autoplay-card select,
+.autoplay-card button {
+  font: inherit;
+  min-height: 44px;
+  border: 1px solid #b9cba9;
+  background: #fffdf7;
+  border-radius: 9px;
+  padding: 8px 12px;
+  color: inherit;
+}
+.autoplay-card select {
+  width: 100%;
+  max-width: 100%;
+}
+.autoplay-card p {
+  margin-top: 12px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.autoplay-card small {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+}
+.autoplay-card form {
+  display: grid;
+  gap: 6px;
+}
+.autoplay-card select:focus-visible {
+  outline: 3px solid #899f70;
+  outline-offset: 2px;
+}

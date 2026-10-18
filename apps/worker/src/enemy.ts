@@ -12,7 +12,7 @@ function json(data: unknown, status: number, requestId: string) {
   });
 }
 
-export async function readEnemyTurn(response: Response) {
+export async function readAgentJson(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("missing_stream");
   const decoder = new TextDecoder();
@@ -48,7 +48,7 @@ export async function readEnemyTurn(response: Response) {
             event.type?.endsWith(".cancelled");
           if (isFailure) throw new Error("failed_turn");
           const isComplete = event.type === "agent.session.turn.completed";
-          if (isComplete) return enemyActionSchema.parse(JSON.parse(text));
+          if (isComplete) return JSON.parse(text) as unknown;
         }
         newline = buffer.indexOf("\n");
       }
@@ -57,6 +57,10 @@ export async function readEnemyTurn(response: Response) {
     await reader.cancel();
     reader.releaseLock();
   }
+}
+
+export async function readEnemyTurn(response: Response) {
+  return enemyActionSchema.parse(await readAgentJson(response));
 }
 
 export async function enemy(

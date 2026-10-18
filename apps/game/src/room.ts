@@ -4,6 +4,7 @@ import type { Category, Item, RoomState, Placement } from "./types.ts";
 import { Resident } from "./player.ts";
 import { canWalk } from "./navigation.ts";
 import type { RoomPhysics } from "./physics.ts";
+import type { AutoMove } from "@devday/contracts";
 
 type MovingItem = {
   object: THREE.Object3D;
@@ -548,7 +549,49 @@ export class Room {
     return true;
   }
 
-  snapshot() {
+  autoPlan() {
+    const targets: { point: Placement; label: string }[] = [];
+    const ray = new THREE.Raycaster();
+    for (const x of [-3.3, 0, 3.3]) {
+      for (const z of [-2.8, -1, 0.8, 2.5]) {
+        ray.set(new THREE.Vector3(x, 5, z), new THREE.Vector3(0, -1, 0));
+        const hit = ray.intersectObjects(this.surfaces, false)[0];
+        const normal = hit?.face?.normal.clone().transformDirection(hit.object.matrixWorld);
+        const valid = hit && normal && normal.y > 0.6 && hit.point.y < 2.6;
+        if (!valid || !hit) continue;
+        targets.push({
+          point: { x, y: hit.point.y + 0.015, z },
+          label: String.fromCharCode(65 + targets.length),
+        });
+      }
+    }
+    const moves: AutoMove[] = [];
+    const marks: { point: Placement; label: string }[] = [...targets];
+    this.items.forEach((item, index) => {
+      const object = this.objects.get(item.id);
+      if (!object) return;
+      const bounds = new THREE.Box3().setFromObject(object);
+      marks.push({
+        point: { x: object.position.x, y: bounds.max.y + 0.15, z: object.position.z },
+        label: String(index + 1),
+      });
+      for (const target of targets) {
+        const isSame =
+          Math.hypot(object.position.x - target.point.x, object.position.z - target.point.z) <
+            0.3 && Math.abs(bounds.min.y - target.point.y) < 0.2;
+        if (isSame) continue;
+        moves.push({
+          id: `${item.id}__${target.label}`,
+          itemId: item.id,
+          point: target.point,
+          description: `${index + 1}: ${item.label} (${object.position.x.toFixed(2)},${object.position.y.toFixed(2)},${object.position.z.toFixed(2)}) を ${target.label} (${target.point.x},${target.point.y.toFixed(2)},${target.point.z}) の平面に置く`,
+        });
+      }
+    });
+    return { moves, image: this.snapshot(marks) };
+  }
+
+  snapshot(marks: { point: Placement; label: string }[] = []) {
     const previous = this.camera.position.clone();
     const ringVisible = this.ring.visible;
     const playerVisible = this.playerObject?.visible ?? false;
@@ -571,6 +614,20 @@ export class Room {
       context.fillStyle = "#f1eee5";
       context.fillRect(0, 0, output.width, output.height);
       context.drawImage(source, 0, 0, output.width, output.height);
+      context.font = "bold 12px sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      for (const mark of marks) {
+        const projected = new THREE.Vector3(mark.point.x, mark.point.y + 0.1, mark.point.z).project(
+          this.camera,
+        );
+        const x = ((projected.x + 1) * output.width) / 2;
+        const y = ((1 - projected.y) * output.height) / 2;
+        context.fillStyle = /^\d+$/.test(mark.label) ? "#345b39" : "#8d4827";
+        context.fillRect(x - 10, y - 10, 20, 20);
+        context.fillStyle = "#ffffff";
+        context.fillText(mark.label, x, y);
+      }
       return output.toDataURL("image/jpeg", 0.85);
     } finally {
       this.camera.position.copy(previous);

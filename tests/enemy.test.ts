@@ -4,8 +4,8 @@ import { EnemyDirector } from "../apps/game/src/enemy-director.ts";
 
 const settings = { model: "gpt-6-luna" as const, effort: "low" as const };
 const items = [
-  { id: "book_1", category: "books" as const, stored: true },
-  { id: "trash_1", category: "trash" as const, stored: false },
+  { id: "book_1", category: "books" as const, placed: true },
+  { id: "trash_1", category: "trash" as const, placed: false },
 ];
 const action = { itemId: "book_1", quip: "この本、もう一度読もうよ！" };
 const input = { ...settings, items, combo: 3, attacksLeft: 5 };
@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("散らかす敵の API", () => {
-  it("選択したモデルと effort、収納済みの対象だけを Agents API に渡す", async () => {
+  it("選択したモデルと effort、移動済みの対象だけを Agents API に渡す", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(turn());
     const response = await enemy(request(), { OPENAI_API_KEY: "test" }, "req", fetcher);
     expect(response.status).toBe(200);
@@ -77,7 +77,7 @@ describe("散らかす敵の API", () => {
     ).toBe(413);
     expect(fetcher).not.toHaveBeenCalled();
   });
-  it("キー未設定や収納済み対象なしでは推論を呼ばない", async () => {
+  it("キー未設定や移動済み対象なしでは推論を呼ばない", async () => {
     const fetcher = vi.fn<typeof fetch>();
     expect((await enemy(request(), { OPENAI_API_KEY: "" }, "req", fetcher)).status).toBe(503);
     expect(
@@ -127,10 +127,25 @@ describe("散らかす敵の API", () => {
 });
 
 describe("敵の進行", () => {
+  it("全アイテムを動かしても画像でクリアと判定されるまでは敵が行動する", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(action));
+    const { state, director, act } = setup(fetcher);
+    state.items.forEach((item) => {
+      item.placed = true;
+    });
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(act).toHaveBeenCalled();
+    director.dispose();
+  });
   function setup(fetcher: typeof fetch, remaining = 5) {
     vi.useFakeTimers();
     vi.stubGlobal("document", { hidden: false });
-    const state = { items: items.map((item) => ({ ...item, label: item.id })), combo: 0 };
+    const state = {
+      items: items.map((item) => ({ ...item, label: item.id })),
+      combo: 0,
+      complete: false,
+    };
     const act = vi.fn();
     const fail = vi.fn();
     const director = new EnemyDirector(
@@ -178,7 +193,7 @@ describe("敵の進行", () => {
     expect(act).not.toHaveBeenCalled();
     expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
   });
-  it("推論中に全収納したら、完了した部屋を再び散らかさない", async () => {
+  it("推論中に画像判定でクリアしたら、完了した部屋を再び散らかさない", async () => {
     let finish!: (value: Response) => void;
     const fetcher = vi.fn<typeof fetch>().mockImplementation(
       () =>
@@ -188,9 +203,7 @@ describe("敵の進行", () => {
     );
     const { state, act, director } = setup(fetcher);
     await vi.advanceTimersByTimeAsync(12_000);
-    state.items.forEach((item) => {
-      item.stored = true;
-    });
+    state.complete = true;
     finish(Response.json(action));
     await vi.advanceTimersByTimeAsync(0);
     expect(act).not.toHaveBeenCalled();
@@ -198,7 +211,7 @@ describe("敵の進行", () => {
     expect(fetcher).toHaveBeenCalledOnce();
     director.dispose();
   });
-  it("全収納後・タブ非表示中は散らかさず、API エラー後は自動リトライしない", async () => {
+  it("画像判定のクリア後・タブ非表示中は散らかさず、API エラー後は自動リトライしない", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(Response.json({ error: "モデルを確認" }, { status: 502 }));
@@ -211,9 +224,7 @@ describe("敵の進行", () => {
     expect(fail).toHaveBeenCalledWith("モデルを確認");
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fetcher).toHaveBeenCalledOnce();
-    state.items.forEach((item) => {
-      item.stored = true;
-    });
+    state.complete = true;
     expect(act).not.toHaveBeenCalled();
     director.dispose();
   });

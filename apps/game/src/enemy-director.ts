@@ -9,7 +9,7 @@ export class EnemyDirector {
 
   constructor(
     private settings: EnemySettings,
-    private snapshot: () => { items: Item[]; combo: number },
+    private snapshot: () => { items: Item[]; combo: number; complete: boolean },
     private act: (itemId: string, quip: string, remaining: number) => void,
     private status: (message: string) => void,
     private fail: (message: string) => void,
@@ -25,11 +25,10 @@ export class EnemyDirector {
   }
 
   private async turn() {
-    const { items, combo } = this.snapshot();
-    const complete = items.length > 0 && items.every((item) => item.stored);
+    const { items, combo, complete } = this.snapshot();
     const hasBudget = this.remaining > 0;
     if (this.disposed || complete || !hasBudget) return;
-    const hasTargets = items.some((item) => item.stored);
+    const hasTargets = items.some((item) => item.placed);
     const canRun = hasTargets && !document.hidden;
     if (!canRun) {
       this.schedule();
@@ -57,9 +56,8 @@ export class EnemyDirector {
         throw new Error(message);
       }
       const action = enemyActionSchema.parse(data);
-      const current = this.snapshot().items;
-      const isComplete = current.every((item) => item.stored);
-      const isCurrentTarget = current.some((item) => item.id === action.itemId && item.stored);
+      const { items: current, complete: isComplete } = this.snapshot();
+      const isCurrentTarget = current.some((item) => item.id === action.itemId && item.placed);
       const canApply = !isComplete && isCurrentTarget && !document.hidden;
       if (canApply) {
         this.remaining -= 1;

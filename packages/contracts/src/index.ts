@@ -8,6 +8,7 @@ export const assessmentRequestSchema = z.object({
 });
 
 export const assessmentSchema = z.object({
+  tidyProbability: z.number().min(0).max(1),
   score: z.number().min(0).max(100),
   confidence: z.number().min(0).max(1),
   label: z.string(),
@@ -16,6 +17,7 @@ export const assessmentSchema = z.object({
 });
 
 export type Assessment = z.infer<typeof assessmentSchema>;
+export const tidyThreshold = 0.8;
 
 export const enemyEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const enemyModels = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra", "gpt-5.6-sol"] as const;
@@ -29,7 +31,7 @@ export const enemyRequestSchema = enemySettingsSchema.extend({
       z.object({
         id: z.string().min(1).max(100),
         category: z.enum(["books", "laundry", "trash", "dolls"]),
-        stored: z.boolean(),
+        placed: z.boolean(),
       }),
     )
     .min(1)

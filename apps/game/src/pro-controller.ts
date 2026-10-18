@@ -1,5 +1,3 @@
-import type { Category } from "./types.ts";
-
 interface HidDevice extends EventTarget {
   opened: boolean;
   productName: string;
@@ -20,9 +18,10 @@ export function parseProReport(reportId: number, data: DataView) {
   const gyro = [18, 30, 42].reduce(
     (sum, offset) => ({
       x: sum.x + data.getInt16(offset, true) / 3,
+      y: sum.y + data.getInt16(offset + 2, true) / 3,
       z: sum.z + data.getInt16(offset + 4, true) / 3,
     }),
-    { x: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
   );
   const rawX = data.getUint8(5) | ((data.getUint8(6) & 0x0f) << 8);
   const rawY = (data.getUint8(6) >> 4) | (data.getUint8(7) << 4);
@@ -41,6 +40,8 @@ export function parseProReport(reportId: number, data: DataView) {
 }
 
 export class ProController {
+  private gyroBias = { x: 0, y: 0, z: 0 };
+  private rotating = false;
   private device: HidDevice | null = null;
   private abort = new AbortController();
   private counter = 0;
@@ -51,16 +52,17 @@ export class ProController {
   private lastReport = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private onPoint: (x: number, y: number, activate: boolean) => void;
-  private onStore: (category: Category) => void;
+  private onDrop: () => void;
   private onStatus: (message: string, connected: boolean) => void;
 
   constructor(
     onPoint: (x: number, y: number, activate: boolean) => void,
-    onStore: (category: Category) => void,
+    onDrop: () => void,
     onStatus: (message: string, connected: boolean) => void,
+    private onRotate: (x: number, y: number, z: number, finished: boolean) => void = () => {},
   ) {
     this.onPoint = onPoint;
-    this.onStore = onStore;
+    this.onDrop = onDrop;
     this.onStatus = onStatus;
   }
 
@@ -119,7 +121,7 @@ export class ProController {
         void this.disconnect();
       }, 1000);
       this.onStatus(
-        "左スティックで照準、A で選択。X：本棚 / Y：服 / B：ごみ / R：人形。＋で照準を中央に戻せます。",
+        "左スティックで照準、Aで選ぶ・置く。Xで足元へ。ZRを押しながら傾けると物を回転。＋で照準を中央へ。",
         true,
       );
       return true;
@@ -177,6 +179,7 @@ export class ProController {
   }
 
   recenter() {
+    this.gyroBias = { x: 0, y: 0, z: 0 };
     this.pointer = { x: 0, y: 0 };
     this.lastTime = 0;
     this.onPoint(0, 0, false);
@@ -200,15 +203,22 @@ export class ProController {
     const pressed = packet.buttons & ~this.previousButtons;
     this.previousButtons = packet.buttons;
     const activate = Boolean(pressed & 0x08);
+    const gyroHeld = Boolean(packet.buttons & 0x80);
+    const canCalibrate = !gyroHeld && Math.hypot(packet.gyro.x, packet.gyro.y, packet.gyro.z) < 200;
+    if (canCalibrate) {
+      for (const axis of ["x", "y", "z"] as const)
+        this.gyroBias[axis] += (packet.gyro[axis] - this.gyroBias[axis]) * 0.05;
+    }
+    if (gyroHeld) {
+      const delta = gyroRotation(packet.gyro, this.gyroBias, elapsed);
+      this.onRotate(delta.x, delta.y, delta.z, false);
+    }
+    const rotationEnded = this.rotating && !gyroHeld;
+    if (rotationEnded) this.onRotate(0, 0, 0, true);
+    this.rotating = gyroHeld;
     this.onPoint(this.pointer.x, this.pointer.y, activate);
-    const toBooks = Boolean(pressed & 0x02);
-    const toLaundry = Boolean(pressed & 0x01);
-    const toTrash = Boolean(pressed & 0x04);
-    const toDolls = Boolean(pressed & 0x40);
-    if (toBooks) this.onStore("books");
-    if (toLaundry) this.onStore("laundry");
-    if (toTrash) this.onStore("trash");
-    if (toDolls) this.onStore("dolls");
+    const dropPressed = Boolean(pressed & 0x02);
+    if (dropPressed) this.onDrop();
     const recenterPressed = packet.plus && !this.previousPlus;
     this.previousPlus = packet.plus;
     if (recenterPressed) this.recenter();
@@ -229,4 +239,19 @@ export class ProController {
     }
     await device.close().catch(() => {});
   }
+}
+
+export function gyroRotation(
+  gyro: { x: number; y: number; z: number },
+  bias: { x: number; y: number; z: number },
+  elapsed: number,
+) {
+  const scale = (2000 / 32768) * (Math.PI / 180) * Math.min(Math.max(elapsed, 0), 0.05);
+  const convert = (value: number) =>
+    Math.abs(value) < 12 ? 0 : Math.max(-0.12, Math.min(0.12, value * scale));
+  return {
+    x: convert(gyro.x - bias.x),
+    y: convert(gyro.z - bias.z),
+    z: -convert(gyro.y - bias.y) || 0,
+  };
 }

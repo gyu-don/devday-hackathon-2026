@@ -11,6 +11,7 @@ const request = (body: unknown = { image }, headers: Record<string, string> = {}
 const decision = {
   model: "gpt-6-luna",
   answers: [
+    { type: "predicate", name: "tidy", probability: 0.83 },
     { type: "score", name: "floor", score: 2, confidence: 0.8 },
     { type: "score", name: "storage", score: 4, confidence: 0.9 },
     { type: "score", name: "overall", score: 3.2, confidence: 0.85 },
@@ -18,13 +19,29 @@ const decision = {
 };
 
 describe("片付け診断", () => {
+  it("score と区別して、画像の predicate が返す確率をそのまま保持する", () => {
+    expect(
+      normalizeDecision({
+        ...decision,
+        answers: decision.answers.map((answer) =>
+          answer.name === "tidy" ? { type: "predicate", name: "tidy", probability: 0.12 } : answer,
+        ),
+      }),
+    ).toMatchObject({ score: 80, tidyProbability: 0.12 });
+    expect(() =>
+      normalizeDecision({
+        ...decision,
+        answers: decision.answers.filter((answer) => answer.name !== "tidy"),
+      }),
+    ).toThrow("decision_refused_or_incomplete");
+  });
   it("確率加重スコアを 0〜100 に換算し、個別の判定と信頼度を保持する", () => {
     expect(normalizeDecision(decision)).toMatchObject({
       score: 80,
       confidence: 0.85,
       details: [
         { name: "床のすっきり度", score: 50 },
-        { name: "ものの収まり具合", score: 100 },
+        { name: "配置のまとまり", score: 100 },
       ],
     });
   });
@@ -77,13 +94,18 @@ describe("片付け診断", () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(decision));
     const response = await assess(request(), { OPENAI_API_KEY: "test" }, "test-request", fetcher);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ score: 80, model: "gpt-6-luna" });
+    expect(await response.json()).toMatchObject({
+      tidyProbability: 0.83,
+      score: 80,
+      model: "gpt-6-luna",
+    });
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, options] = fetcher.mock.calls[0]!;
     expect(url).toBe("https://api.openai.com/v1/decisions");
     const payload = JSON.parse(String(options?.body));
     expect(payload.input[0].content[1]).toEqual({ type: "input_image", image_url: image });
     expect(payload.questions.map((question: { name: string }) => question.name)).toEqual([
+      "tidy",
       "floor",
       "storage",
       "overall",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseProReport } from "../apps/game/src/pro-controller.ts";
+import { parseProReport, gyroRotation } from "../apps/game/src/pro-controller.ts";
 
 describe("プロコン1の標準入力", () => {
   it("短いレポートと IMU を含まないモードを無視する", () => {
@@ -24,7 +24,7 @@ describe("プロコン1の標準入力", () => {
     expect(parseProReport(0x30, data)).toEqual({
       buttons: 0x08,
       plus: true,
-      gyro: { x: 0, z: 600 },
+      gyro: { x: 0, y: 0, z: 600 },
       stick: { x: 0, y: 0 },
     });
   });
@@ -43,4 +43,16 @@ describe("プロコン1の標準入力", () => {
     setStick(0, 4095);
     expect(parseProReport(0x30, data)?.stick).toEqual({ x: -1, y: 1 });
   });
+});
+
+it("ジャイロはバイアスと微小な揺れを除き、長時間の入力停止後も回転を制限する", () => {
+  expect(gyroRotation({ x: 30, y: 30, z: 30 }, { x: 30, y: 30, z: 30 }, 1)).toEqual({
+    x: 0,
+    y: 0,
+    z: 0,
+  });
+  const delta = gyroRotation({ x: 32767, y: 32767, z: 32767 }, { x: 0, y: 0, z: 0 }, 10);
+  expect(Math.abs(delta.x)).toBeLessThanOrEqual(0.12);
+  expect(delta.y).toBeGreaterThan(0);
+  expect(delta.z).toBeLessThan(0);
 });

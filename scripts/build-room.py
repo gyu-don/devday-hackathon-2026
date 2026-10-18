@@ -77,9 +77,13 @@ def box(name, position, size, mat, parent=None, bevel=0.04):
     return finish(obj, name, mat, parent, position)
 
 
-def cylinder(name, position, radius, depth, mat, parent=None, top=None):
+def cylinder(name, position, radius, depth, mat, parent=None, top=None, hollow=False):
     bpy.ops.mesh.primitive_cone_add(
-        vertices=32, radius1=radius, radius2=radius if top is None else top, depth=depth
+        vertices=32,
+        radius1=radius,
+        radius2=radius if top is None else top,
+        depth=depth,
+        end_fill_type="NOTHING" if hollow else "NGON",
     )
     obj = bpy.context.object
     modifier = obj.modifiers.new("Rounded rim", "BEVEL")
@@ -177,7 +181,10 @@ laundry = empty(
     category="laundry",
     label="ランドリーバスケット",
 )
-cylinder("Basket inside", (0, 0.36, 0), 0.53, 0.69, "dark", laundry, top=0.62)
+cylinder(
+    "Basket inside", (0, 0.36, 0), 0.53, 0.69, "dark", laundry, top=0.62, hollow=True
+)
+cylinder("Basket bottom", (0, 0.045, 0), 0.53, 0.06, "dark", laundry)
 for index in range(24):
     angle = index * math.tau / 24
     cylinder(
@@ -197,8 +204,14 @@ for height in [0.1, 0.25, 0.40, 0.55, 0.74]:
 trash = empty(
     "zone_trash", (-3.5, 0, 1.85), kind="zone", category="trash", label="ごみ箱"
 )
-cylinder("Wastebasket body", (0, 0.40, 0), 0.39, 0.78, "blue", trash, top=0.46)
-cylinder("Wastebasket opening", (0, 0.80, 0), 0.40, 0.025, "dark", trash)
+cylinder(
+    "Wastebasket body", (0, 0.40, 0), 0.39, 0.78, "blue", trash, top=0.46, hollow=True
+)
+cylinder("Wastebasket bottom", (0, 0.04, 0), 0.39, 0.06, "dark", trash)
+bpy.ops.mesh.primitive_torus_add(
+    major_radius=0.445, minor_radius=0.025, major_segments=32, minor_segments=6
+)
+finish(bpy.context.object, "Wastebasket rim", "blue", trash, (0, 0.80, 0))
 for index in range(12):
     angle = index * math.tau / 12
     cylinder(
@@ -439,6 +452,100 @@ for side in [-1, 1]:
         doll,
     )
 sphere("Chest heart", (0, 0.735, 0.17), (0.04, 0.045, 0.022), "cream", doll)
+
+M["resident_skin"] = material("Resident warm skin", (0.90, 0.64, 0.45))
+M["resident_hair"] = material("Resident chestnut hair", (0.24, 0.12, 0.075))
+M["resident_apron"] = material("Resident sage apron", (0.32, 0.49, 0.36))
+M["resident_denim"] = material("Resident indigo trousers", (0.22, 0.32, 0.39))
+player = empty("player_resident", (-1.75, 0.06, 2.5), kind="player", label="小さな住人")
+sphere("Resident sweater", (0, 0.84, 0), (0.27, 0.34, 0.20), "cream", player)
+box("Apron skirt", (0, 0.65, 0.11), (0.49, 0.38, 0.26), "resident_apron", player, 0.07)
+box("Apron bib", (0, 0.92, 0.20), (0.31, 0.31, 0.055), "resident_apron", player, 0.04)
+box("Apron pocket", (0, 0.66, 0.255), (0.22, 0.12, 0.03), "sage", player, 0.025)
+for side in [-1, 1]:
+    box(
+        "Apron strap",
+        (side * 0.14, 1.04, 0.12),
+        (0.055, 0.20, 0.16),
+        "resident_apron",
+        player,
+        0.015,
+    )
+    sphere(
+        "Apron brass button",
+        (side * 0.11, 0.99, 0.24),
+        (0.025, 0.025, 0.014),
+        "yellow",
+        player,
+    )
+    leg = empty(f"resident_leg_{side}", (side * 0.13, 0.49, 0), stridePhase=side)
+    leg.parent = player
+    box("Trouser leg", (0, -0.17, 0), (0.18, 0.34, 0.20), "resident_denim", leg, 0.07)
+    sphere("Resident slipper", (0, -0.37, 0.06), (0.12, 0.08, 0.18), "peach", leg)
+    arm = empty(f"resident_arm_{side}", (side * 0.29, 1.02, 0), stridePhase=-side)
+    arm.parent = player
+    sphere("Sweater sleeve", (side * 0.015, -0.16, 0), (0.10, 0.23, 0.11), "cream", arm)
+    sphere(
+        "Resident hand",
+        (side * 0.02, -0.36, 0.015),
+        (0.085, 0.10, 0.08),
+        "resident_skin",
+        arm,
+    )
+cylinder("Resident neck", (0, 1.14, 0), 0.085, 0.12, "resident_skin", player)
+sphere("Chestnut bob", (0, 1.43, -0.035), (0.32, 0.33, 0.28), "resident_hair", player)
+sphere("Resident face", (0, 1.39, 0.105), (0.265, 0.27, 0.22), "resident_skin", player)
+for side in [-1, 1]:
+    sphere(
+        "Resident ear",
+        (side * 0.255, 1.36, 0.03),
+        (0.055, 0.08, 0.06),
+        "resident_skin",
+        player,
+    )
+    sphere(
+        "Resident eye",
+        (side * 0.10, 1.43, 0.306),
+        (0.033, 0.047, 0.022),
+        "dark",
+        player,
+    )
+    sphere(
+        "Resident eye glint",
+        (side * 0.10 - 0.008, 1.45, 0.325),
+        (0.009, 0.013, 0.006),
+        "paper",
+        player,
+    )
+    sphere(
+        "Resident blush",
+        (side * 0.17, 1.33, 0.29),
+        (0.04, 0.022, 0.012),
+        "peach",
+        player,
+    )
+for index in range(5):
+    sphere(
+        "Swept chestnut fringe",
+        (-0.19 + index * 0.085, 1.61 - index * 0.02, 0.215),
+        (0.08, 0.13, 0.07),
+        "resident_hair",
+        player,
+    )
+sphere(
+    "Resident nose", (0, 1.37, 0.324), (0.033, 0.027, 0.032), "resident_skin", player
+)
+sphere(
+    "Resident smile", (0, 1.28, 0.288), (0.055, 0.018, 0.012), "resident_hair", player
+)
+box(
+    "Resident hair clip",
+    (-0.25, 1.53, 0.14),
+    (0.08, 0.03, 0.035),
+    "yellow",
+    player,
+    0.012,
+)
 
 M["dust"] = material("Lilac dust", (0.61, 0.46, 0.70))
 enemy = empty("enemy_chirakashi", (2.8, 0.75, 2.6), kind="enemy")

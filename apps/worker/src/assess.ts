@@ -9,14 +9,19 @@ const scoreAnswer = z.object({
   confidence: z.number().min(0).max(1),
 });
 const decisionSchema = z.object({ model: z.string(), answers: z.array(z.unknown()) });
+const tidyAnswer = z.object({
+  type: z.literal("predicate"),
+  name: z.literal("tidy"),
+  probability: z.number().min(0).max(1),
+});
 const levels = [
   {
     label: "散らかっている",
-    description: "多くの本・服・ごみが床や家具の上に散らばり、整頓されていない。",
+    description: "物が無秩序に散乱し、床の動線や家具の用途を妨げている。",
   },
   {
     label: "片付けを始めたところ",
-    description: "一部を収納したが、複数の種類の散乱物が多く残っている。",
+    description: "一部がまとまったが、乱雑な物がまだ多く残っている。",
   },
   {
     label: "半分くらい整った",
@@ -29,11 +34,17 @@ const levels = [
   {
     label: "きれいに整った",
     description:
-      "本は棚、服はバスケットへ戻り、ごみが見当たらない。床とテーブルに散乱物がない。家具・植物・カップ・ラグ・クッションは本来の装飾であり散乱物ではない。",
+      "床や机が使え、物がまとまり、すっきりした印象。置き場所は自由で、本棚やバスケットなど決まった場所を要求しない。装飾・家具の多さでは減点しない。",
   },
 ];
 
 export const questions = [
+  {
+    type: "predicate",
+    name: "tidy",
+    instructions:
+      "画像の部屋は片付いているか？床の動線と机が使え、小物がまとまり、全体が整って見えるなら真。置き場所に唯一の正解はなく、本は本棚・服はバスケットなどの固定ルールで判定しない。見える乱雑さ・使いやすさだけを根拠とし、家具・ラグ・植物・カップ・装飾・人形の存在そのものでは減点しない。画像だけで判定する。",
+  },
   {
     type: "score",
     name: "floor",
@@ -45,14 +56,14 @@ export const questions = [
     type: "score",
     name: "storage",
     instructions:
-      "本・服・ごみが本棚・ランドリーバスケット・ごみ箱に収まり、人形が棚のピンクの飾り台に立ち、テーブルやソファを本来の用途に使える度合いを評価してください。テーブルのコーヒーカップとソファのクッションは散乱物ではありません。",
+      "物がまとまり、床・机・ソファが使える度合いを画像だけから評価する。置き場所は自由。本を本棚へ戻すなどのカテゴリ別の正解は要求しない。整った積み方や並べ方も評価し、カップ・クッション・人形などの装飾自体を散乱物として扱わない。",
     levels,
   },
   {
     type: "score",
     name: "overall",
     instructions:
-      "この3Dの部屋が全体としてどれくらい片付いているかを採点してください。画像に見える床・テーブル・ソファ上の本、服、紙くず、缶、人形の残り具合を根拠にします。人形は棚のピンクの飾り台が正しい置き場所です。装飾や家具の多さでは減点しないでください。",
+      "この部屋が全体として整って見える度合いを画像だけから評価する。床の動線、机の空き、小物のまとまりを根拠とし、固定の収納先や全アイテムの移動は要求しない。人形は好きな場所に飾ってよい。装飾や家具の多さでは減点しない。",
     levels,
   },
 ];
@@ -91,6 +102,10 @@ async function readBody(request: Request) {
 
 export function normalizeDecision(input: unknown) {
   const decision = decisionSchema.parse(input);
+  const tidy = decision.answers.flatMap((answer) => {
+    const result = tidyAnswer.safeParse(answer);
+    return result.success ? [result.data] : [];
+  })[0];
   const answers = decision.answers.flatMap((answer) => {
     const result = scoreAnswer.safeParse(answer);
     return result.success ? [result.data] : [];
@@ -98,7 +113,7 @@ export function normalizeDecision(input: unknown) {
   const overall = answers.find((answer) => answer.name === "overall");
   const floor = answers.find((answer) => answer.name === "floor");
   const storage = answers.find((answer) => answer.name === "storage");
-  const isComplete = overall && floor && storage;
+  const isComplete = overall && floor && storage && tidy;
   if (!isComplete) throw new Error("decision_refused_or_incomplete");
   const score = Math.round(overall.score * 25);
   const label =
@@ -110,12 +125,13 @@ export function normalizeDecision(input: unknown) {
           ? "少しずつ、すっきり"
           : "まずは足元から、ひとつずつ";
   return assessmentSchema.parse({
+    tidyProbability: tidy.probability,
     score,
     confidence: overall.confidence,
     label,
     details: [
       { name: "床のすっきり度", score: Math.round(floor.score * 25) },
-      { name: "ものの収まり具合", score: Math.round(storage.score * 25) },
+      { name: "配置のまとまり", score: Math.round(storage.score * 25) },
     ],
     model: decision.model,
   });
@@ -171,7 +187,7 @@ export async function assess(
             content: [
               {
                 type: "input_text",
-                text: "これは部屋を片付けるゲームの現在のスクリーンショットです。物が適切な場所に戻っているか、画像の視覚的な状態を判定してください。",
+                text: "これは自由に物を配置する片付けゲームの画像です。決まった収納先はありません。物のまとまり、床の動線、机の使いやすさから、画像だけで片付いているか判定してください。",
               },
               { type: "input_image", image_url: image },
             ],

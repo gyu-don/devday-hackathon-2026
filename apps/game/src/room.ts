@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import type { Category, Item, RoomState } from "./types.ts";
+import type { Category, Item, RoomState, Placement } from "./types.ts";
+import { Resident } from "./player.ts";
+import { canWalk } from "./navigation.ts";
+import type { RoomPhysics } from "./physics.ts";
 
 type MovingItem = {
   object: THREE.Object3D;
@@ -19,7 +22,6 @@ export class Room {
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private objects = new Map<string, THREE.Object3D>();
-  private zones = new Map<Category, THREE.Object3D>();
   private original = new Map<
     string,
     { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }
@@ -33,7 +35,9 @@ export class Room {
   private disposed = false;
   private angle = 0;
   private onState: (state: RoomState) => void;
-  private onAttempt: (category: Category) => void;
+  private onPlace: (point: Placement) => void;
+  private initial = new Map<string, THREE.Vector3>();
+  private surfaces: THREE.Mesh[] = [];
   private abort = new AbortController();
   private cursor = document.createElement("span");
   private enemy: THREE.Object3D | null = null;
@@ -41,15 +45,22 @@ export class Room {
   private enemyUntil = 0;
   private enemyFrom = new THREE.Vector3();
   private enemyTo = new THREE.Vector3();
+  private resident: Resident | null = null;
+  private playerObject: THREE.Object3D | null = null;
+  private floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.06);
+  private physics: RoomPhysics | null = null;
+  private rotating = false;
 
   constructor(
     host: HTMLElement,
     onState: (state: RoomState) => void,
-    onAttempt: (category: Category) => void,
+    onPlace: (point: Placement) => void,
     onError: () => void,
+    onPlayerStatus: (message: string) => void = () => {},
+    private onChanged: () => void = () => {},
   ) {
     this.onState = onState;
-    this.onAttempt = onAttempt;
+    this.onPlace = onPlace;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -58,8 +69,9 @@ export class Room {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.domElement.setAttribute(
       "aria-label",
-      "小さな部屋。物を選び、本棚・バスケット・ごみ箱へ戻してください。下の一覧からも操作できます。",
+      "操作キャラのいる小さな部屋。床をクリック・タップ、WASDで移動。物を選び、床や家具の上に自由に置いてください。下のボタンからも操作できます。",
     );
+    this.renderer.domElement.tabIndex = 0;
     this.renderer.domElement.setAttribute("role", "img");
     host.append(this.renderer.domElement);
     this.cursor.className = "gyro-cursor";
@@ -145,9 +157,49 @@ export class Room {
         if (!isTap) return;
         const target = this.hit(event);
         const isItem = target?.userData.kind === "item";
-        const isZone = target?.userData.kind === "zone";
         if (isItem && target) this.select(target.name);
-        if (isZone && target) this.onAttempt(target.userData.category as Category);
+        if (isItem) return;
+        this.interactWithSurface();
+      },
+      options,
+    );
+
+    const movementKeys = new Set([
+      "KeyW",
+      "KeyA",
+      "KeyS",
+      "KeyD",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+    ]);
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        const target = event.target;
+        const isEditing =
+          target instanceof HTMLElement &&
+          (target.isContentEditable || target.matches("input,textarea,select,button,summary"));
+        const isMovement =
+          movementKeys.has(event.code) &&
+          !isEditing &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey;
+        if (!isMovement) return;
+        event.preventDefault();
+        this.resident?.key(event.code, true);
+      },
+      options,
+    );
+    window.addEventListener("keyup", (event) => this.resident?.key(event.code, false), options);
+    window.addEventListener("blur", () => this.resident?.stop(), options);
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        const isHidden = document.hidden;
+        if (isHidden) this.resident?.stop();
       },
       options,
     );
@@ -164,6 +216,11 @@ export class Room {
       (gltf) => {
         if (this.disposed) return;
         gltf.scene.traverse((object) => {
+          const isPlayer = object.userData.kind === "player";
+          if (isPlayer) {
+            this.playerObject = object;
+            this.resident = new Resident(object, onPlayerStatus);
+          }
           const isEnemy = object.userData.kind === "enemy";
           if (isEnemy) {
             this.enemy = object;
@@ -175,7 +232,6 @@ export class Room {
             object.receiveShadow = true;
           }
           const isItem = object.userData.kind === "item";
-          const isZone = object.userData.kind === "zone";
           if (isItem) {
             this.objects.set(object.name, object);
             this.original.set(object.name, {
@@ -187,14 +243,49 @@ export class Room {
               id: object.name,
               label: String(object.userData.label),
               category: object.userData.category as Category,
-              stored: false,
+              placed: false,
             });
           }
-          if (isZone) this.zones.set(object.userData.category as Category, object);
         });
         this.items.sort((a, b) => a.id.localeCompare(b.id));
         this.scene.add(gltf.scene);
-        this.emit();
+        gltf.scene.updateMatrixWorld(true);
+        gltf.scene.traverse((object) => {
+          const isMesh = object instanceof THREE.Mesh;
+          if (!isMesh) return;
+          let parent: THREE.Object3D | null = object;
+          while (parent && !parent.userData.kind) parent = parent.parent;
+          const isSurface = !parent || parent.userData.kind === "zone";
+          if (isSurface) this.surfaces.push(object);
+        });
+        for (const item of this.items) {
+          const object = this.objects.get(item.id)!;
+          this.initial.set(item.id, object.position.clone());
+        }
+        void import("./physics.ts")
+          .then(async ({ RoomPhysics }) => {
+            const physics = await RoomPhysics.create(
+              this.surfaces,
+              [...this.objects.values()],
+              () => {
+                for (const [id, object] of this.objects) {
+                  const origin = this.original.get(id);
+                  if (origin) {
+                    origin.position.copy(object.position);
+                    origin.rotation.copy(object.rotation);
+                  }
+                }
+                onChanged();
+              },
+            );
+            if (this.disposed) {
+              physics.dispose();
+              return;
+            }
+            this.physics = physics;
+            this.emit();
+          })
+          .catch(() => onError());
       },
       undefined,
       () => onError(),
@@ -202,6 +293,8 @@ export class Room {
 
     this.renderer.setAnimationLoop(() => {
       const now = performance.now();
+      this.physics?.update(now);
+      this.resident?.update(now, 0.65 + this.angle, this.reducedMotion.matches);
       this.moves = this.moves.filter((move) => {
         const progress = this.reducedMotion.matches ? 1 : Math.min((now - move.started) / 600, 1);
         const eased = 1 - (1 - progress) ** 3;
@@ -210,6 +303,7 @@ export class Room {
         move.object.scale.lerpVectors(move.scale, move.toScale, progress);
         const isFinished = progress === 1;
         if (isFinished && move.hide) move.object.visible = false;
+        if (isFinished) this.physics?.release(move.object.name);
         return !isFinished;
       });
       if (this.enemy?.visible) {
@@ -224,11 +318,6 @@ export class Room {
       }
       const selected = this.selected ? this.objects.get(this.selected) : undefined;
       if (selected) {
-        const origin = this.original.get(selected.name);
-        if (origin)
-          selected.position.y =
-            origin.position.y +
-            (this.reducedMotion.matches ? 0.16 : 0.2 + Math.sin(now / 220) * 0.04);
         this.ring.position.copy(selected.position);
         this.ring.position.y = Math.max(0.1, selected.position.y - 0.1);
       }
@@ -265,10 +354,8 @@ export class Room {
 
   private hitPointer() {
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const available = this.items
-      .filter((item) => !item.stored)
-      .flatMap((item) => this.objects.get(item.id) ?? []);
-    const hits = this.raycaster.intersectObjects([...available, ...this.zones.values()], true);
+    const available = this.items.flatMap((item) => this.objects.get(item.id) ?? []);
+    const hits = this.raycaster.intersectObjects(available, true);
     let object = hits[0]?.object;
     while (object && !object.userData.kind) object = object.parent ?? undefined;
     return object;
@@ -282,9 +369,24 @@ export class Room {
     if (!activate) return;
     const target = this.hitPointer();
     const isItem = target?.userData.kind === "item";
-    const isZone = target?.userData.kind === "zone";
     if (isItem && target) this.select(target.name);
-    if (isZone && target) this.onAttempt(target.userData.category as Category);
+    if (isItem) return;
+    this.interactWithSurface();
+  }
+
+  private walkOnFloor() {
+    const point = this.raycaster.ray.intersectPlane(this.floorPlane, new THREE.Vector3());
+    const insideRoom = point && Math.abs(point.x) <= 4.4 && Math.abs(point.z) <= 3.4;
+    if (!insideRoom || !point) return;
+    this.resident?.walkTo(point);
+  }
+
+  stepPlayer(x: number, z: number) {
+    this.resident?.step(x, z, 0.65 + this.angle);
+  }
+
+  stopPlayer() {
+    this.resident?.stop();
   }
 
   disableAim() {
@@ -293,54 +395,115 @@ export class Room {
 
   select(id: string) {
     const item = this.items.find((candidate) => candidate.id === id);
-    const canSelect = item && !item.stored;
+    const canSelect = Boolean(item);
     if (!canSelect) return;
     this.clearSelection();
     this.moves = this.moves.filter((move) => move.object.name !== id);
     this.selected = id;
+    this.physics?.grab(id);
+    const object = this.objects.get(id);
+    const hasObject = Boolean(object);
+    if (hasObject && object) this.resident?.walkTo(object.position);
     this.ring.visible = true;
     this.emit();
   }
 
   private clearSelection() {
+    this.finishRotation();
     const previous = this.selected ? this.objects.get(this.selected) : undefined;
     const origin = previous ? this.original.get(previous.name) : undefined;
     if (previous && origin) previous.position.copy(origin.position);
+    if (previous) this.physics?.release(previous.name);
     this.selected = null;
     this.ring.visible = false;
   }
 
-  store(category: Category) {
+  deselect() {
+    this.clearSelection();
+    this.emit();
+  }
+
+  rotateSelected(x: number, y: number, z: number) {
+    const object = this.selected ? this.objects.get(this.selected) : undefined;
+    if (!object) return;
+    const changed = x !== 0 || y !== 0 || z !== 0;
+    if (!changed) return;
+    const started = !this.rotating;
+    this.rotating = true;
+    if (started) this.onChanged();
+    object.rotateX(x);
+    object.rotateY(y);
+    object.rotateZ(z);
+  }
+
+  finishRotation() {
+    const changed = this.rotating;
+    this.rotating = false;
+    if (changed) this.onChanged();
+  }
+
+  isSettling() {
+    return this.rotating || this.moves.length > 0 || (this.physics?.isSettling() ?? false);
+  }
+
+  place(point: Placement) {
+    this.finishRotation();
     const item = this.items.find((candidate) => candidate.id === this.selected);
-    const isCorrect = item && !item.stored && item.category === category;
-    if (!isCorrect || !item) return false;
-    const object = this.objects.get(item.id);
-    if (!object) return false;
-    const count = this.items.filter(
-      (candidate) => candidate.stored && candidate.category === category,
-    ).length;
-    const destinations = {
-      books: new THREE.Vector3(-2.9 + count * 0.24, 1.65, -2.96),
-      laundry: new THREE.Vector3(3.45, 0.62 + count * 0.07, 1.9),
-      trash: new THREE.Vector3(-3.5, 0.35, 1.85),
-      dolls: new THREE.Vector3(-1.9, 2.33, -2.96),
-    };
+    const object = item ? this.objects.get(item.id) : undefined;
+    const origin = item ? this.original.get(item.id) : undefined;
+    const valid =
+      item &&
+      object &&
+      origin &&
+      Math.abs(point.x) <= 4.4 &&
+      Math.abs(point.z) <= 3.4 &&
+      point.y >= 0 &&
+      point.y <= 2.7;
+    if (!valid || !item || !object || !origin) return false;
+    object.updateMatrixWorld(true);
+    const bottom = new THREE.Box3().setFromObject(object).min.y;
+    const target = new THREE.Vector3(point.x, point.y + object.position.y - bottom + 0.04, point.z);
+    this.physics?.grab(item.id);
+    this.moves = this.moves.filter((move) => move.object !== object);
     this.moves.push({
       object,
       from: object.position.clone(),
-      to: destinations[category],
+      to: target,
       scale: object.scale.clone(),
-      toScale: (this.original.get(item.id)?.scale.clone() ?? object.scale.clone()).multiplyScalar(
-        0.65,
-      ),
+      toScale: origin.scale.clone(),
       started: performance.now(),
-      hide: category === "trash",
+      hide: false,
     });
-    item.stored = true;
+    origin.position.copy(target);
+    origin.rotation.copy(object.rotation);
+    item.placed = true;
+    this.resident?.walkTo(point);
     this.selected = null;
     this.ring.visible = false;
     this.emit();
     return true;
+  }
+
+  dropPoint(): Placement | null {
+    const player = this.playerObject;
+    if (!player) return null;
+    const x = player.position.x + Math.sin(player.rotation.y) * 0.65;
+    const z = player.position.z + Math.cos(player.rotation.y) * 0.65;
+    const clear = canWalk({ x, z });
+    return { x: clear ? x : player.position.x, y: 0.1, z: clear ? z : player.position.z };
+  }
+
+  private interactWithSurface() {
+    const hasSelection = this.selected !== null;
+    if (!hasSelection) {
+      this.walkOnFloor();
+      return;
+    }
+    const hit = this.raycaster.intersectObjects(this.surfaces, false)[0];
+    const normal = hit?.face?.normal.clone().transformDirection(hit.object.matrixWorld);
+    const horizontal = hit && normal && normal.y > 0.6;
+    if (!horizontal || !hit) return;
+    this.onPlace({ x: hit.point.x, y: hit.point.y + 0.015, z: hit.point.z });
   }
 
   rotate(direction: number) {
@@ -357,11 +520,16 @@ export class Room {
     const item = this.items.find((candidate) => candidate.id === id);
     const object = this.objects.get(id);
     const origin = this.original.get(id);
-    const canScatter = item?.stored && object && origin;
-    if (!canScatter || !item || !object || !origin) return false;
+    const home = this.initial.get(id);
+    const canScatter = item?.placed && object && origin && home;
+    if (!canScatter || !item || !object || !origin || !home) return false;
+    origin.position.copy(home);
+    const wasSelected = this.selected === id;
+    if (wasSelected) this.clearSelection();
+    this.physics?.grab(id);
     this.moves = this.moves.filter((move) => move.object !== object);
     object.visible = true;
-    item.stored = false;
+    item.placed = false;
     this.moves.push({
       object,
       from: object.position.clone(),
@@ -383,42 +551,56 @@ export class Room {
   snapshot() {
     const previous = this.camera.position.clone();
     const ringVisible = this.ring.visible;
-    this.camera.position.set(Math.sin(0.65) * 14.6, 11.2, Math.cos(0.65) * 14.6);
-    this.camera.lookAt(0, 0.75, 0);
-    this.ring.visible = false;
-    this.renderer.render(this.scene, this.camera);
-    const output = document.createElement("canvas");
-    const source = this.renderer.domElement;
-    const scale = Math.min(768 / source.width, 768 / source.height, 1);
-    output.width = Math.round(source.width * scale);
-    output.height = Math.round(source.height * scale);
-    const context = output.getContext("2d");
-    if (!context) throw new Error("画像を作成できませんでした。");
-    context.fillStyle = "#f1eee5";
-    context.fillRect(0, 0, output.width, output.height);
-    context.drawImage(source, 0, 0, output.width, output.height);
-    this.camera.position.copy(previous);
-    this.camera.lookAt(0, 0.75, 0);
-    this.ring.visible = ringVisible;
-    return output.toDataURL("image/jpeg", 0.85);
+    const playerVisible = this.playerObject?.visible ?? false;
+    const enemyVisible = this.enemy?.visible ?? false;
+    // Characters must not occlude clutter or be mistaken for belongings by the judge.
+    if (this.playerObject) this.playerObject.visible = false;
+    if (this.enemy) this.enemy.visible = false;
+    try {
+      this.camera.position.set(Math.sin(0.65) * 14.6, 11.2, Math.cos(0.65) * 14.6);
+      this.camera.lookAt(0, 0.75, 0);
+      this.ring.visible = false;
+      this.renderer.render(this.scene, this.camera);
+      const output = document.createElement("canvas");
+      const source = this.renderer.domElement;
+      const scale = Math.min(768 / source.width, 768 / source.height, 1);
+      output.width = Math.round(source.width * scale);
+      output.height = Math.round(source.height * scale);
+      const context = output.getContext("2d");
+      if (!context) throw new Error("画像を作成できませんでした。");
+      context.fillStyle = "#f1eee5";
+      context.fillRect(0, 0, output.width, output.height);
+      context.drawImage(source, 0, 0, output.width, output.height);
+      return output.toDataURL("image/jpeg", 0.85);
+    } finally {
+      this.camera.position.copy(previous);
+      this.camera.lookAt(0, 0.75, 0);
+      this.ring.visible = ringVisible;
+      if (this.playerObject) this.playerObject.visible = playerVisible;
+      if (this.enemy) this.enemy.visible = enemyVisible;
+    }
   }
 
   reset() {
+    this.resident?.reset();
     this.enemyUntil = 0;
     if (this.enemy) this.enemy.position.set(2.8, 0.75, 2.6);
     this.moves = [];
     this.clearSelection();
     for (const item of this.items) {
-      item.stored = false;
+      item.placed = false;
       const object = this.objects.get(item.id);
       const origin = this.original.get(item.id);
-      if (object && origin) {
+      const home = this.initial.get(item.id);
+      if (object && origin && home) {
+        origin.position.copy(home);
         object.position.copy(origin.position);
         object.rotation.copy(origin.rotation);
         object.scale.copy(origin.scale);
         object.visible = true;
       }
     }
+    this.physics?.reset();
     this.angle = 0;
     this.positionCamera();
     this.emit();
@@ -429,6 +611,7 @@ export class Room {
     this.abort.abort();
     this.observer.disconnect();
     this.renderer.setAnimationLoop(null);
+    this.physics?.dispose();
     this.scene.traverse((object) => {
       const isMesh = object instanceof THREE.Mesh;
       if (!isMesh) return;

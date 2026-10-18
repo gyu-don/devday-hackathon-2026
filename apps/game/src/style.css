@@ -1130,7 +1130,7 @@ h1 {
   height: 100%;
   background: #caa06b;
   transform-origin: left;
-  animation: combo-time 4s linear forwards;
+  animation: combo-time 30s linear forwards;
 }
 .tidy-burst {
   position: absolute;
@@ -1426,5 +1426,134 @@ h1 {
   summary {
     min-block-size: 44px;
     min-inline-size: 44px;
+  }
+}
+
+.player-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 18px;
+  padding: 18px 22px;
+  border: 1px solid #d9e1cf;
+  border-radius: 16px;
+  background: #eef1e6;
+}
+.room-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.room-column .room-panel {
+  flex: 1;
+  min-height: 600px;
+}
+@media (max-width: 760px) {
+  .room-column .room-panel {
+    flex: none;
+    min-height: 0;
+  }
+}
+.player-controls b {
+  font-family: var(--serif);
+  font-size: 15px;
+}
+.player-controls p {
+  font-size: 12px;
+  margin-top: 5px;
+}
+.player-controls small {
+  font-size: 11px;
+  color: #717c65;
+}
+.player-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  gap: 5px;
+  flex-shrink: 0;
+}
+.player-dpad button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px;
+  border: 1px solid #cbd5bc;
+  background: #fffdf7;
+  border-radius: 10px;
+  font-size: 19px;
+}
+.player-dpad button:first-child {
+  grid-column: 2;
+}
+.player-dpad button:nth-child(2) {
+  grid-row: 2;
+  grid-column: 1;
+}
+.player-dpad button:nth-child(3) {
+  grid-row: 2;
+  grid-column: 2;
+  font-size: 12px;
+}
+.player-dpad button:nth-child(4) {
+  grid-row: 2;
+  grid-column: 3;
+}
+.player-dpad button:last-child {
+  grid-row: 3;
+  grid-column: 2;
+}
+@media (max-width: 480px) {
+  .player-controls {
+    padding: 15px;
+    gap: 10px;
+  }
+  .player-controls b {
+    font-size: 13px;
+  }
+  .player-controls small {
+    font-size: 10px;
+  }
+}
+
+.free-placement {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+  background: #f2f1e8;
+}
+.free-placement b {
+  font-size: 13px;
+}
+.free-placement p {
+  font-size: 11px;
+  margin: 8px 0 12px;
+}
+.free-placement .primary-button {
+  width: 100%;
+  min-height: 44px;
+  font-size: 12px;
+}
+.free-placement .text-button {
+  min-height: 44px;
+  font-size: 12px;
+}
+.placement-rotation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.placement-rotation button {
+  flex: 1;
+  min-height: 44px;
+  font-size: 11px;
+  border: 1px solid #d5d7ca;
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: 6px;
+}
+@media (max-width: 760px) {
+  .free-placement {
+    grid-column: 1/-1;
   }
 }

@@ -5,6 +5,7 @@ import { Resident } from "./player.ts";
 import { canWalk } from "./navigation.ts";
 import type { RoomPhysics } from "./physics.ts";
 import type { AutoMove } from "@devday/contracts";
+import { roomRegions } from "@devday/contracts";
 
 type MovingItem = {
   object: THREE.Object3D;
@@ -659,21 +660,21 @@ export class Room {
   autoPlan() {
     const targets: { point: Placement; label: string }[] = [];
     const ray = new THREE.Raycaster();
-    for (const x of [-3.3, 0, 3.3]) {
-      for (const z of [-2.8, -1, 0.8, 2.5]) {
-        ray.set(new THREE.Vector3(x, 5, z), new THREE.Vector3(0, -1, 0));
-        const hit = ray.intersectObjects(this.surfaces, false)[0];
-        const normal = hit?.face?.normal.clone().transformDirection(hit.object.matrixWorld);
-        const valid = hit && normal && normal.y > 0.6 && hit.point.y < 2.6;
-        if (!valid || !hit) continue;
-        targets.push({
-          point: { x, y: hit.point.y + 0.015, z },
-          label: String.fromCharCode(65 + targets.length),
-        });
-      }
+    for (const region of roomRegions) {
+      const x = (region.minX + region.maxX) / 2;
+      const z = (region.minZ + region.maxZ) / 2;
+      ray.set(new THREE.Vector3(x, 5, z), new THREE.Vector3(0, -1, 0));
+      const hit = ray.intersectObjects(this.surfaces, false)[0];
+      const normal = hit?.face?.normal.clone().transformDirection(hit.object.matrixWorld);
+      const valid = hit && normal && normal.y > 0.6 && hit.point.y < 2.6;
+      if (!valid || !hit) continue;
+      targets.push({
+        point: { x, y: hit.point.y + 0.015, z },
+        label: region.id,
+      });
     }
     const moves: AutoMove[] = [];
-    const marks: { point: Placement; label: string }[] = [...targets];
+    const marks: { point: Placement; label: string }[] = [];
     this.items.forEach((item, index) => {
       const object = this.objects.get(item.id);
       if (!object) return;
@@ -691,29 +692,44 @@ export class Room {
           id: `${item.id}__${target.label}`,
           itemId: item.id,
           point: target.point,
+          source: { x: object.position.x, z: object.position.z },
           description: `${index + 1}: ${item.label} (${object.position.x.toFixed(2)},${object.position.y.toFixed(2)},${object.position.z.toFixed(2)}) を ${target.label} (${target.point.x},${target.point.y.toFixed(2)},${target.point.z}) の平面に置く`,
         });
       }
     });
-    return { moves, image: this.snapshot(marks) };
+    return { moves, image: this.snapshot(marks, true) };
   }
 
-  snapshot(marks: { point: Placement; label: string }[] = []) {
+  snapshot(marks: { point: Placement; label: string }[] = [], grid = false) {
     const previous = this.camera.position.clone();
     const ringVisible = this.ring.visible;
     const playerVisible = this.playerObject?.visible ?? false;
     const enemyVisible = this.enemy?.visible ?? false;
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const pixelRatio = this.renderer.getPixelRatio();
+    const aspect = this.camera.aspect;
     // Characters must not occlude clutter or be mistaken for belongings by the judge.
     if (this.playerObject) this.playerObject.visible = false;
     if (this.enemy) this.enemy.visible = false;
     try {
+      if (grid) {
+        this.renderer.setPixelRatio(1);
+        this.renderer.setSize(1024, 1024, false);
+        this.camera.aspect = 1;
+        this.camera.updateProjectionMatrix();
+      }
       this.camera.position.set(Math.sin(0.65) * 14.6, 11.2, Math.cos(0.65) * 14.6);
       this.camera.lookAt(0, 0.75, 0);
+      if (grid) {
+        this.camera.position.set(0, 18, 0.01);
+        this.camera.lookAt(0, 0, 0);
+      }
       this.ring.visible = false;
       this.renderer.render(this.scene, this.camera);
       const output = document.createElement("canvas");
       const source = this.renderer.domElement;
-      const scale = Math.min(768 / source.width, 768 / source.height, 1);
+      const limit = grid ? 1024 : 768;
+      const scale = Math.min(limit / source.width, limit / source.height, 1);
       output.width = Math.round(source.width * scale);
       output.height = Math.round(source.height * scale);
       const context = output.getContext("2d");
@@ -724,7 +740,40 @@ export class Room {
       context.font = "bold 12px sans-serif";
       context.textAlign = "center";
       context.textBaseline = "middle";
+      const project = (x: number, z: number) => {
+        const position = new THREE.Vector3(x, 0.14, z).project(this.camera);
+        return {
+          x: ((position.x + 1) * output.width) / 2,
+          y: ((1 - position.y) * output.height) / 2,
+        };
+      };
+      if (grid) {
+        context.strokeStyle = "#24627e";
+        context.lineWidth = 1;
+        for (const region of roomRegions) {
+          const corners = [
+            project(region.minX, region.minZ),
+            project(region.maxX, region.minZ),
+            project(region.maxX, region.maxZ),
+            project(region.minX, region.maxZ),
+          ];
+          context.beginPath();
+          corners.forEach((corner, index) => {
+            if (index === 0) context.moveTo(corner.x, corner.y);
+            else context.lineTo(corner.x, corner.y);
+          });
+          context.closePath();
+          context.stroke();
+          const label = project(region.minX + 0.18, region.maxZ - 0.18);
+          context.fillStyle = "#12435d";
+          context.fillRect(label.x - 10, label.y - 7, 20, 14);
+          context.fillStyle = "#ffffff";
+          context.font = "bold 9px sans-serif";
+          context.fillText(region.id, label.x, label.y);
+        }
+      }
       for (const mark of marks) {
+        context.font = "bold 12px sans-serif";
         const projected = new THREE.Vector3(mark.point.x, mark.point.y + 0.1, mark.point.z).project(
           this.camera,
         );
@@ -737,6 +786,12 @@ export class Room {
       }
       return output.toDataURL("image/jpeg", 0.85);
     } finally {
+      if (grid) {
+        this.renderer.setPixelRatio(pixelRatio);
+        this.renderer.setSize(size.x, size.y, false);
+        this.camera.aspect = aspect;
+        this.camera.updateProjectionMatrix();
+      }
       this.camera.position.copy(previous);
       this.camera.lookAt(0, 0.75, 0);
       this.ring.visible = ringVisible;

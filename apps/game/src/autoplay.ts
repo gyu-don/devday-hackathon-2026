@@ -1,5 +1,5 @@
 import { autoResultSchema } from "@devday/contracts";
-import type { AutoMove, AutoRequest } from "@devday/contracts";
+import type { AutoMove, AutoRequest, AutoDecision } from "@devday/contracts";
 
 type Frame = { version: number; image: string; moves: AutoMove[]; tidyProbability: number };
 export type AutoProgress = {
@@ -22,6 +22,7 @@ type Controls = {
   status: (message: string) => void;
   end: () => void;
   progress?: (progress: AutoProgress) => void;
+  decision?: (decision: AutoDecision) => void;
 };
 
 export class AutoPlayer {
@@ -188,6 +189,7 @@ export class AutoPlayer {
         return;
       }
       const result = autoResultSchema.parse(data);
+      if (result.decision) this.controls.decision?.(result.decision);
       this.reconnects = 0;
       const stop = result.action === "stop";
       if (stop) {

@@ -16,6 +16,7 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
   const [scores, setScores] = useState({ human: emptyDuelScore(), ai: emptyDuelScore() });
   const [result, setResult] = useState("");
   const [settings, setSettings] = useState<EnemySettings>({ model: "gpt-6-luna", effort: "low" });
+  const [mode, setMode] = useState<"decisions" | "agents">("decisions");
   const live = useRef({ phase, startAt, scores });
   live.current = { phase, startAt, scores };
   const locked = phase === "playing" || phase === "countdown";
@@ -156,45 +157,67 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
             <summary>相手の作戦・あそびかた</summary>
             <div className="duel-settings">
               <label>
-                AIのモデル
+                AIの判断方式
                 <select
-                  value={settings.model}
+                  value={mode}
                   disabled={locked}
                   onChange={(event) =>
-                    setSettings((previous) => ({
-                      ...previous,
-                      model: event.target.value as EnemySettings["model"],
-                    }))
+                    setMode(event.target.value === "agents" ? "agents" : "decisions")
                   }
                 >
-                  {enemyModels.map((model) => (
-                    <option key={model}>{model}</option>
-                  ))}
+                  <option value="decisions">Decisions API · 200区画の確率で判断</option>
+                  <option value="agents">Agents API · 画像を見て考える</option>
                 </select>
               </label>
-              <label>
-                AIのeffort
-                <select
-                  value={settings.effort}
-                  disabled={locked}
-                  onChange={(event) =>
-                    setSettings((previous) => ({
-                      ...previous,
-                      effort: event.target.value as EnemySettings["effort"],
-                    }))
-                  }
-                >
-                  {enemyEfforts.map((effort) => (
-                    <option key={effort}>{effort}</option>
-                  ))}
-                </select>
-              </label>
+              {mode === "decisions" && (
+                <p>
+                  部屋を20×10の200区画に分けて優先度を評価。動かす物を絞り、その物の置き先の改善見込みから配置を選びます。モデルはgpt-6-lunaです。
+                </p>
+              )}
+              {mode === "agents" && (
+                <>
+                  <label>
+                    AIのモデル
+                    <select
+                      value={settings.model}
+                      disabled={locked}
+                      onChange={(event) =>
+                        setSettings((previous) => ({
+                          ...previous,
+                          model: event.target.value as EnemySettings["model"],
+                        }))
+                      }
+                    >
+                      {enemyModels.map((model) => (
+                        <option key={model}>{model}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    AIのeffort
+                    <select
+                      value={settings.effort}
+                      disabled={locked}
+                      onChange={(event) =>
+                        setSettings((previous) => ({
+                          ...previous,
+                          effort: event.target.value as EnemySettings["effort"],
+                        }))
+                      }
+                    >
+                      {enemyEfforts.map((effort) => (
+                        <option key={effort}>{effort}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
             </div>
             <p>
               物を選び、床や机などの平面へ置こう。決まった収納先はありません。配置を工夫して確率を上げるとコンボと得点！
             </p>
             <p>
-              AIは自分の部屋の画像をOpenAI Agents APIに送り、配置を判断。審判は両者とも同じDecisions
+              AIの操作判断はDecisions APIとAgents APIを切り替えられます。審判は両者とも同じDecisions
               APIです。最高確率は返ってきた最新状態の有効な判定から記録します。終了後に届いた結果は勝敗に使いません。
             </p>
             <p>
@@ -209,6 +232,7 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
             startAt={startAt}
             playing={phase === "playing"}
             settings={settings}
+            mode={mode}
             onScore={update}
             onReady={markReady}
           />
@@ -218,12 +242,13 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
             startAt={startAt}
             playing={phase === "playing"}
             settings={settings}
+            mode={mode}
             onScore={update}
             onReady={markReady}
           />
         </div>
         <footer className="duel-footer">
-          Agentsが考える。Decisionsが画像で判定する。あなたは、どう片付ける？
+          画像を見て判断するAIと、片付け対決。あなたは、どう片付ける？
           <br />
           ゲーム画面と配置・判定履歴をOpenAIに送信します。
         </footer>

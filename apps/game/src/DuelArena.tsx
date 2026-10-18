@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { assessmentSchema, tidyThreshold } from "@devday/contracts";
-import type { EnemySettings } from "@devday/contracts";
+import type { EnemySettings, AutoDecision } from "@devday/contracts";
+import { DecisionMap } from "./DecisionMap.tsx";
 import { Room } from "./room.ts";
 import { AutoPlayer } from "./autoplay.ts";
 import { LiveJudge } from "./live-judge.ts";
@@ -15,6 +16,7 @@ type Props = {
   startAt: number | null;
   playing: boolean;
   settings: EnemySettings;
+  mode: "decisions" | "agents";
   onScore: (side: DuelSide, score: DuelScore) => void;
   onReady: (side: DuelSide, ready: boolean) => void;
 };
@@ -41,6 +43,7 @@ export function DuelArena(props: Props) {
   const [note, setNote] = useState("部屋を準備しています…");
   const [deviceNote, setDeviceNote] = useState("USBプロコンにも対応");
   const [connected, setConnected] = useState(false);
+  const [decision, setDecision] = useState<AutoDecision | null>(null);
   const human = props.side === "human";
   const active = props.playing && view.clearAt === null;
 
@@ -231,10 +234,14 @@ export function DuelArena(props: Props) {
   }, [active, human, props.playing, props.startAt]);
 
   useEffect(() => {
+    setDecision(null);
+  }, [props.round, props.mode]);
+
+  useEffect(() => {
     const runAI = !human && props.playing;
     if (!runAI) return;
     const player = new AutoPlayer(
-      { mode: "agents", ...props.settings },
+      { mode: props.mode, ...props.settings },
       {
         frame: () => {
           const current = room.current;
@@ -265,11 +272,12 @@ export function DuelArena(props: Props) {
           return place(move.point, signal);
         },
         status: setNote,
+        decision: setDecision,
         end: () => {},
       },
     );
     return () => player.dispose();
-  }, [human, props.playing, props.round, props.settings, place]);
+  }, [human, props.playing, props.round, props.settings, props.mode, place]);
 
   useEffect(() => {
     if (!human) return;
@@ -354,11 +362,14 @@ export function DuelArena(props: Props) {
       </p>
       {!human && (
         <p className="duel-ai-caption">
-          Agents API · {props.settings.model} / {props.settings.effort}
+          {props.mode === "decisions"
+            ? "Decisions API · 200区画の確率から判断 · gpt-6-luna"
+            : `Agents API · ${props.settings.model} / ${props.settings.effort}`}
           <br />
           自分の部屋の画像を見て、次の配置を考えます。
         </p>
       )}
+      {!human && props.mode === "decisions" && decision && <DecisionMap decision={decision} />}
       {human && (
         <>
           <p className="duel-selection">

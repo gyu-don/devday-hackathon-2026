@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { autoplay } from "../apps/worker/src/autoplay.ts";
 import { AutoPlayer } from "../apps/game/src/autoplay.ts";
+import { roomRegions } from "../packages/contracts/src/index.ts";
 
 const config = { mode: "decisions" as const, model: "gpt-6-luna" as const, effort: "low" as const };
 const move = {
@@ -8,6 +9,7 @@ const move = {
   itemId: "book",
   description: "1の本を面Aに置く",
   point: { x: 0, y: 0.7, z: 0 },
+  source: { x: 0, z: 0 },
 };
 const image = "data:image/jpeg;base64,/9j/2Q==";
 const input = { ...config, image, moves: [move], history: [], tidyProbability: 0.2 };
@@ -19,7 +21,18 @@ const request = (body: unknown = input, headers: Record<string, string> = {}) =>
   });
 const choice = (action = move.id) =>
   Response.json({ answers: [{ type: "choice", name: "move", choice: action }] });
-const stream = (action = move.id) =>
+const decisions = (improvement = 0.9) =>
+  vi.fn<typeof fetch>().mockImplementation(async (_url, options) => {
+    const body = JSON.parse(String(options?.body));
+    return Response.json({
+      answers: body.questions.map((question: { name: string }) => ({
+        type: "predicate",
+        name: question.name,
+        probability: question.name.startsWith("move_") ? improvement : 0.8,
+      })),
+    });
+  });
+const stream = (action = 0) =>
   new Response(
     [
       { type: "agent.session.turn.output_text.done", text: JSON.stringify({ action }) },
@@ -33,20 +46,25 @@ afterEach(() => {
 });
 
 describe("自動配置 API", () => {
-  it("Decisions の choice に画像と操作候補を渡す", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(choice());
+  it("Decisions の200区画の predicate に画像と操作候補を渡す", async () => {
+    const fetcher = decisions();
     const response = await autoplay(request(), { OPENAI_API_KEY: "test" }, "req", fetcher);
-    expect(await response.json()).toEqual({ action: move.id });
+    expect(await response.json()).toMatchObject({
+      action: move.id,
+      decision: {
+        regions: expect.arrayContaining([{ id: "A1", needsTidyingProbability: 0.8 }]),
+        improvementProbability: 0.9,
+      },
+    });
     const [url, options] = fetcher.mock.calls[0]!;
     const body = JSON.parse(String(options?.body));
     expect(url).toBe("https://api.openai.com/v1/decisions");
     expect(body.model).toBe("gpt-6-luna");
     expect(body.input[0].content[1]).toEqual({ type: "input_image", image_url: image });
-    expect(body.questions[0]).toMatchObject({
-      type: "choice",
-      name: "move",
-      choices: [{ value: move.id }, { value: "stop" }],
-    });
+    expect(body.questions).toHaveLength(200);
+    expect(body.questions[0]).toMatchObject({ type: "predicate", name: "region_A1" });
+    expect(body.questions[199].name).toBe("region_J20");
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
   it("Agents のモデル・effort と画像を反映し、完了した行動だけを採用する", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(stream());
@@ -66,57 +84,86 @@ describe("自動配置 API", () => {
       tools: [],
     });
     expect(body.environment).toEqual({ type: "none" });
-    expect(body.agent.text.format.schema.properties.action.enum).toEqual([move.id, "stop"]);
+    expect(body.agent.text.format.schema.properties.action).toEqual({
+      type: "integer",
+      minimum: -1,
+      maximum: 0,
+    });
     expect(body.input[0].content[1].image_url).toBe(image);
   });
-  it("Decisions は対象と置き場所を順に選び、選んだ対象の配置だけを許可する", async () => {
+  it("Agents は200区画分の操作番号を元の候補に戻し、範囲外や小数を拒否する", async () => {
+    const moves = roomRegions.map((region) => ({
+      ...move,
+      id: `book__${region.id}`,
+      point: { x: (region.minX + region.maxX) / 2, y: 0.1, z: (region.minZ + region.maxZ) / 2 },
+    }));
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(stream(199));
+    const run = () =>
+      autoplay(
+        request({ ...input, mode: "agents", moves }),
+        { OPENAI_API_KEY: "test" },
+        "req",
+        fetcher,
+      );
+    expect(await (await run()).json()).toEqual({ action: "book__J20" });
+    const body = JSON.parse(String(fetcher.mock.calls[0]![1]?.body));
+    const context = JSON.parse(body.input[0].content[0].text);
+    expect(context.items).toHaveLength(1);
+    expect(context.targets).toHaveLength(200);
+    expect(context.items[0].placements[199]).toEqual([199, 199]);
+    for (const invalid of [200, -2, 0.5]) {
+      fetcher.mockResolvedValue(stream(invalid));
+      expect((await run()).status).toBe(502);
+    }
+    fetcher.mockResolvedValue(stream(-1));
+    expect(await (await run()).json()).toEqual({ action: "stop" });
+  });
+  it("Decisions は区画・対象・置き場所を順に絞って評価する", async () => {
     const other = {
       ...move,
       id: "towel__A",
       itemId: "towel",
       description: "2: タオル を A に置く",
+      source: { x: 3.3, z: 2.8 },
     };
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(choice("towel"))
-      .mockResolvedValueOnce(choice(other.id));
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      return Response.json({
+        answers: body.questions.map((question: { name: string }) => ({
+          type: "predicate",
+          name: question.name,
+          probability: question.name.startsWith("region_")
+            ? question.name === "region_J18"
+              ? 0.99
+              : 0.1
+            : 0.9,
+        })),
+      });
+    });
     const response = await autoplay(
       request({ ...input, moves: [move, other] }),
       { OPENAI_API_KEY: "test" },
       "req",
       fetcher,
     );
-    expect(await response.json()).toEqual({ action: other.id });
+    expect(await response.json()).toMatchObject({
+      action: other.id,
+      decision: { sourceRegion: "J18" },
+    });
     const first = JSON.parse(String(fetcher.mock.calls[0]![1]?.body));
     const second = JSON.parse(String(fetcher.mock.calls[1]![1]?.body));
-    expect(first.questions[0].choices.map((option: { value: string }) => option.value)).toEqual([
-      "book",
-      "towel",
-    ]);
-    expect(second.questions[0].choices.map((option: { value: string }) => option.value)).toEqual([
-      other.id,
-      "stop",
-    ]);
-    const wrong = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(choice("towel"))
-      .mockResolvedValueOnce(choice(move.id));
-    expect(
-      (
-        await autoplay(
-          request({ ...input, moves: [move, other] }),
-          { OPENAI_API_KEY: "test" },
-          "req",
-          wrong,
-        )
-      ).status,
-    ).toBe(502);
+    expect(first.questions).toHaveLength(roomRegions.length);
+    expect(second.questions).toHaveLength(1);
+    expect(second.questions[0].instructions).toContain("towel");
+    const third = JSON.parse(String(fetcher.mock.calls[2]![1]?.body));
+    expect(third.questions).toHaveLength(1);
+    expect(third.questions[0].instructions).toContain(other.id);
   });
   it("モデルが stop を選んでも、ゲームのクリア判定は返さない", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(choice("stop"));
+    const fetcher = decisions(0.4);
     expect(
       await (await autoplay(request(), { OPENAI_API_KEY: "test" }, "req", fetcher)).json(),
-    ).toEqual({ action: "stop" });
+    ).toMatchObject({ action: "stop", decision: { improvementProbability: 0.4 } });
   });
   it("拒否・候補外の行動・完了前の切断を成功として返さない", async () => {
     const fetcher = vi

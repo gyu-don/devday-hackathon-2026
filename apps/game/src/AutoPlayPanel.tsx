@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { enemyEfforts, enemyModels, enemySettingsSchema } from "@devday/contracts";
-import type { AutoMove, EnemySettings } from "@devday/contracts";
+import type { AutoMove, EnemySettings, AutoDecision } from "@devday/contracts";
+import { DecisionMap } from "./DecisionMap.tsx";
 import type { AutoProgress } from "./autoplay.ts";
 import type { Room } from "./room.ts";
 import { AutoPlayer } from "./autoplay.ts";
@@ -29,6 +30,7 @@ export function AutoPlayPanel(props: Props) {
   const [settings, setSettings] = useState<EnemySettings>({ model: "gpt-6-luna", effort: "low" });
   const [message, setMessage] = useState("AI に画像を見せて、片付けを任せてみよう。");
   const [progress, setProgress] = useState<AutoProgress | null>(null);
+  const [decision, setDecision] = useState<AutoDecision | null>(null);
 
   const stop = () => {
     const current = director.current;
@@ -81,6 +83,7 @@ export function AutoPlayPanel(props: Props) {
         status: setMessage,
         end: () => setRunning(false),
         progress: setProgress,
+        decision: setDecision,
       },
     );
     director.current = player;
@@ -119,6 +122,7 @@ export function AutoPlayPanel(props: Props) {
             }
             props.onStart();
             setProgress(null);
+            setDecision(null);
             setRunning(true);
           }}
         >
@@ -138,7 +142,7 @@ export function AutoPlayPanel(props: Props) {
           disabled={running}
           onChange={(event) => setMode(event.target.value === "agents" ? "agents" : "decisions")}
         >
-          <option value="decisions">Decisions API · 画像から候補を選択</option>
+          <option value="decisions">Decisions API · 200区画の確率で判断</option>
           <option value="agents">Agents API · 画像と状態から判断</option>
         </select>
         {mode === "agents" && (
@@ -183,6 +187,7 @@ export function AutoPlayPanel(props: Props) {
         )}
       </details>
       <p role="status">{message}</p>
+      {mode === "decisions" && decision && <DecisionMap decision={decision} />}
       {progress && (
         <div className="autoplay-progress" aria-label="AIチャレンジの記録">
           <span>{progress.turns}手</span>

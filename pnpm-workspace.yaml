@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+
+minimumReleaseAge: 1440
+strictDepBuilds: true
+allowBuilds:
+  # tsx が使う実行バイナリの準備・バージョン検証に必要。
+  esbuild@0.28.2: true
+  # Wrangler のローカル Workers ランタイムの準備・バージョン検証に必要。
+  workerd@1.20261012.1: true
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+saveExact: true

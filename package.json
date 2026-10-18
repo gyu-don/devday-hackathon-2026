@@ -1,0 +1,29 @@
+{
+  "name": "devday-hackathon-2026",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx --no-install only-allow pnpm",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings .",
+    "typecheck": "pnpm --recursive --if-present run typecheck",
+    "tsx": "tsx",
+    "dev": "pnpm --filter @devday/worker dev",
+    "build": "pnpm --filter @devday/worker build",
+    "deploy": "pnpm --filter @devday/worker run deploy",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck"
+  },
+  "devDependencies": {
+    "only-allow": "1.2.2",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": "10.34.7"
+  },
+  "packageManager": "pnpm@10.34.7"
+}

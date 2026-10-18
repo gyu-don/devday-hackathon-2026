@@ -19,6 +19,23 @@ export const assessmentSchema = z.object({
 export type Assessment = z.infer<typeof assessmentSchema>;
 export const tidyThreshold = 0.8;
 
+// MCP Eventsでdotsへゲームの結果を渡す。褒め方は受信するエージェントに任せ、
+// アプリ固有のデータは事実をまとめたsummaryだけにする（Workなどでも共通）。
+export const gameFinishedEventName = "game.finished";
+export const gameResultDataSchema = z.strictObject({ summary: z.string().trim().min(1).max(1000) });
+export const gameResultSubmissionSchema = gameResultDataSchema.extend({
+  eventId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  timestamp: z.iso.datetime({ offset: true }),
+});
+export type GameResultSubmission = z.infer<typeof gameResultSubmissionSchema>;
+export type GameFinishedEvent = {
+  eventId: string;
+  name: typeof gameFinishedEventName;
+  timestamp: string;
+  data: z.infer<typeof gameResultDataSchema>;
+  cursor: string | null;
+};
+
 export const enemyEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const enemyModels = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra", "gpt-5.6-sol"] as const;
 export const enemySettingsSchema = z.object({

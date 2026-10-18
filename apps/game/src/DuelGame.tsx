@@ -4,6 +4,8 @@ import type { EnemySettings } from "@devday/contracts";
 import { DuelArena } from "./DuelArena.tsx";
 import { duelDuration, duelWinner, emptyDuelScore } from "./duel.ts";
 import type { DuelSide, DuelScore } from "./duel.ts";
+import { duelResultSubmission, sendGameResult } from "./game-result.ts";
+import type { GameResultSubmission } from "@devday/contracts";
 
 type Phase = "ready" | "countdown" | "playing" | "finished";
 
@@ -17,11 +19,31 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
   const [result, setResult] = useState("");
   const [settings, setSettings] = useState<EnemySettings>({ model: "gpt-6-luna", effort: "low" });
   const [mode, setMode] = useState<"decisions" | "agents">("decisions");
+  const matchId = useRef("");
+  const pendingResult = useRef<GameResultSubmission | null>(null);
+  const [notification, setNotification] = useState<"idle" | "sending" | "sent" | "failed">("idle");
   const live = useRef({ phase, startAt, scores });
   live.current = { phase, startAt, scores };
   const locked = phase === "playing" || phase === "countdown";
 
+  const notify = useCallback(async (submission: GameResultSubmission) => {
+    setNotification("sending");
+    try {
+      await sendGameResult(submission);
+      if (matchId.current === submission.eventId) setNotification("sent");
+    } catch {
+      if (matchId.current === submission.eventId) setNotification("failed");
+    }
+  }, []);
+
   const finish = useCallback((winner: DuelSide | "draw" | null, interrupted = false) => {
+    const current = live.current;
+    if (current.phase !== "playing" && current.phase !== "countdown") return;
+    // ハッカソン審査向け: 結果確定がMCP Eventsのトリガー。dotsを想定し、
+    // Workなど対応エージェントへも同じgame.finishedを配信する。
+    // 中断やAIの操作停止は結果通知にしない。Reactの再描画前にも終了をロックする。
+    const completed = current.phase === "playing" && !interrupted && winner !== null;
+    current.phase = "finished";
     const message = interrupted
       ? "対戦を中断しました。勝敗はつきません。"
       : winner === "human"
@@ -29,10 +51,14 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
         : winner === "ai"
           ? "AI WINS! AIの勝ち！もう一度挑もう。"
           : "DRAW! 引き分け。";
-    live.current.phase = "finished";
     setResult(message);
     setPhase("finished");
-  }, []);
+    if (completed && current.startAt !== null) {
+      const submission = duelResultSubmission(matchId.current, winner, current.scores, current.startAt, Date.now());
+      pendingResult.current = submission;
+      void notify(submission);
+    }
+  }, [notify]);
   const update = useCallback(
     (side: DuelSide, score: DuelScore) => {
       const current = live.current;
@@ -81,6 +107,9 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
     const time = Date.now();
     const fresh = { human: emptyDuelScore(), ai: emptyDuelScore() };
     live.current = { phase: "countdown", startAt: time + 3000, scores: fresh };
+    matchId.current = crypto.randomUUID();
+    pendingResult.current = null;
+    setNotification("idle");
     setScores(fresh);
     setStartAt(time + 3000);
     setNow(time);
@@ -151,8 +180,21 @@ export function DuelGame({ onPractice }: { onPractice: () => void }) {
                 あなた 最高{Math.round(scores.human.best * 100)}%・{scores.human.moves}手　/　AI
                 最高{Math.round(scores.ai.best * 100)}%・{scores.ai.moves}手
               </span>
+              {notification !== "idle" && (
+                <span>
+                  {notification === "sending" ? "結果を通知中…" : notification === "sent" ? "結果を通知サーバーに送りました。接続済みのdotsなどに届きます。" : "結果を通知できませんでした。"}
+                  {notification === "failed" && <button onClick={() => { if (pendingResult.current) void notify(pendingResult.current); }}>通知を再試行</button>}
+                </span>
+              )}
             </div>
           )}
+          <details className="duel-rules">
+            <summary>dotsに結果を知らせる</summary>
+            <p>dotsやChatGPT Workに接続すると、対戦が終わるたびに結果が届き、あなたに合わせて褒めてもらえます。</p>
+            <p>接続先: <code>{new URL("/mcp", window.location.href).href}</code></p>
+            <p>接続したエージェントに「game.finishedを購読して、結果が届いたらプレイ内容に合わせて褒めて」と頼んでください。</p>
+            <p>勝ち・負け・引き分けを通知します。中断とひとり練習は対象外です。このデモでは、接続した全員にこのゲームの対戦結果が届きます。</p>
+          </details>
           <details className="duel-rules">
             <summary>相手の作戦・あそびかた</summary>
             <div className="duel-settings">

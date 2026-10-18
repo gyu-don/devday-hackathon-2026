@@ -7,6 +7,7 @@ type MovingItem = {
   from: THREE.Vector3;
   to: THREE.Vector3;
   scale: THREE.Vector3;
+  toScale: THREE.Vector3;
   started: number;
   hide: boolean;
 };
@@ -19,7 +20,10 @@ export class Room {
   private pointer = new THREE.Vector2();
   private objects = new Map<string, THREE.Object3D>();
   private zones = new Map<Category, THREE.Object3D>();
-  private original = new Map<string, { position: THREE.Vector3; rotation: THREE.Euler }>();
+  private original = new Map<
+    string,
+    { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }
+  >();
   private items: Item[] = [];
   private selected: string | null = null;
   private ring: THREE.Mesh;
@@ -32,6 +36,11 @@ export class Room {
   private onAttempt: (category: Category) => void;
   private abort = new AbortController();
   private cursor = document.createElement("span");
+  private enemy: THREE.Object3D | null = null;
+  private enemyEnabled = false;
+  private enemyUntil = 0;
+  private enemyFrom = new THREE.Vector3();
+  private enemyTo = new THREE.Vector3();
 
   constructor(
     host: HTMLElement,
@@ -109,26 +118,36 @@ export class Room {
     this.observer.observe(host);
     const canvas = this.renderer.domElement;
     const options = { signal: this.abort.signal };
+    let pressed: { id: number; x: number; y: number } | null = null;
     canvas.addEventListener(
       "pointerdown",
       (event) => {
-        const isPrimary = event.button === 0;
+        const isPrimary = event.isPrimary && event.button === 0;
         if (!isPrimary) return;
-        const target = this.hit(event);
-        const isItem = target?.userData.kind === "item";
-        if (isItem && target) this.select(target.name);
-        canvas.setPointerCapture(event.pointerId);
+        pressed = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      },
+      options,
+    );
+    canvas.addEventListener(
+      "pointercancel",
+      () => {
+        pressed = null;
       },
       options,
     );
     canvas.addEventListener(
       "pointerup",
       (event) => {
+        const isTap =
+          pressed?.id === event.pointerId &&
+          Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 10;
+        pressed = null;
+        if (!isTap) return;
         const target = this.hit(event);
+        const isItem = target?.userData.kind === "item";
         const isZone = target?.userData.kind === "zone";
+        if (isItem && target) this.select(target.name);
         if (isZone && target) this.onAttempt(target.userData.category as Category);
-        const hasCapture = canvas.hasPointerCapture(event.pointerId);
-        if (hasCapture) canvas.releasePointerCapture(event.pointerId);
       },
       options,
     );
@@ -145,6 +164,11 @@ export class Room {
       (gltf) => {
         if (this.disposed) return;
         gltf.scene.traverse((object) => {
+          const isEnemy = object.userData.kind === "enemy";
+          if (isEnemy) {
+            this.enemy = object;
+            object.visible = this.enemyEnabled;
+          }
           const isMesh = object instanceof THREE.Mesh;
           if (isMesh) {
             object.castShadow = true;
@@ -157,6 +181,7 @@ export class Room {
             this.original.set(object.name, {
               position: object.position.clone(),
               rotation: object.rotation.clone(),
+              scale: object.scale.clone(),
             });
             this.items.push({
               id: object.name,
@@ -182,11 +207,21 @@ export class Room {
         const eased = 1 - (1 - progress) ** 3;
         move.object.position.lerpVectors(move.from, move.to, eased);
         move.object.position.y += Math.sin(progress * Math.PI) * 1.6;
-        move.object.scale.copy(move.scale).multiplyScalar(1 - progress * 0.35);
+        move.object.scale.lerpVectors(move.scale, move.toScale, progress);
         const isFinished = progress === 1;
         if (isFinished && move.hide) move.object.visible = false;
         return !isFinished;
       });
+      if (this.enemy?.visible) {
+        const active = now < this.enemyUntil;
+        const progress = this.reducedMotion.matches
+          ? 1
+          : Math.min(1, (now - (this.enemyUntil - 1800)) / 600);
+        if (active) this.enemy.position.lerpVectors(this.enemyFrom, this.enemyTo, progress);
+        this.enemy.position.y = this.reducedMotion.matches
+          ? 0.75
+          : 0.75 + Math.sin(now / 280) * 0.12;
+      }
       const selected = this.selected ? this.objects.get(this.selected) : undefined;
       if (selected) {
         const origin = this.original.get(selected.name);
@@ -261,6 +296,7 @@ export class Room {
     const canSelect = item && !item.stored;
     if (!canSelect) return;
     this.clearSelection();
+    this.moves = this.moves.filter((move) => move.object.name !== id);
     this.selected = id;
     this.ring.visible = true;
     this.emit();
@@ -294,6 +330,9 @@ export class Room {
       from: object.position.clone(),
       to: destinations[category],
       scale: object.scale.clone(),
+      toScale: (this.original.get(item.id)?.scale.clone() ?? object.scale.clone()).multiplyScalar(
+        0.65,
+      ),
       started: performance.now(),
       hide: category === "trash",
     });
@@ -307,6 +346,38 @@ export class Room {
   rotate(direction: number) {
     this.angle = THREE.MathUtils.clamp(this.angle + direction * 0.14, -0.4, 0.35);
     this.positionCamera();
+  }
+
+  setEnemyVisible(enabled: boolean) {
+    this.enemyEnabled = enabled;
+    if (this.enemy) this.enemy.visible = enabled;
+  }
+
+  scatter(id: string) {
+    const item = this.items.find((candidate) => candidate.id === id);
+    const object = this.objects.get(id);
+    const origin = this.original.get(id);
+    const canScatter = item?.stored && object && origin;
+    if (!canScatter || !item || !object || !origin) return false;
+    this.moves = this.moves.filter((move) => move.object !== object);
+    object.visible = true;
+    item.stored = false;
+    this.moves.push({
+      object,
+      from: object.position.clone(),
+      to: origin.position.clone(),
+      scale: object.scale.clone(),
+      toScale: origin.scale.clone(),
+      started: performance.now(),
+      hide: false,
+    });
+    if (this.enemy) {
+      this.enemyFrom.copy(this.enemy.position);
+      this.enemyTo.copy(origin.position);
+      this.enemyUntil = performance.now() + 1800;
+    }
+    this.emit();
+    return true;
   }
 
   snapshot() {
@@ -333,6 +404,8 @@ export class Room {
   }
 
   reset() {
+    this.enemyUntil = 0;
+    if (this.enemy) this.enemy.position.set(2.8, 0.75, 2.6);
     this.moves = [];
     this.clearSelection();
     for (const item of this.items) {
@@ -342,7 +415,7 @@ export class Room {
       if (object && origin) {
         object.position.copy(origin.position);
         object.rotation.copy(origin.rotation);
-        object.scale.setScalar(1);
+        object.scale.copy(origin.scale);
         object.visible = true;
       }
     }

@@ -233,7 +233,7 @@ h1 {
 .scene {
   position: absolute;
   inset: 10px -12px 10px;
-  touch-action: none;
+  touch-action: pan-y pinch-zoom;
 }
 .scene canvas {
   display: block;
@@ -1298,5 +1298,133 @@ h1 {
   }
   .tidy-burst > i {
     display: none;
+  }
+}
+
+.enemy-card {
+  margin-bottom: 24px;
+  padding: 18px;
+  background: #f0eaf3;
+  border: 1px solid #dfd1e5;
+  border-radius: 16px;
+  color: #655073;
+}
+.enemy-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.enemy-card h2 {
+  font-size: 14px;
+}
+.enemy-card p {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.enemy-card small {
+  display: block;
+  margin-top: 10px;
+  font-size: 10px;
+}
+.enemy-card form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  margin-top: 14px;
+}
+.enemy-card label {
+  grid-row: 1;
+  font-size: 12px;
+}
+.enemy-card select {
+  grid-row: 2;
+  width: 100%;
+}
+.enemy-card form button {
+  grid-row: 2;
+}
+.enemy-card select,
+.enemy-card button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid #c9b6d4;
+  border-radius: 9px;
+  background: #fffafc;
+  min-height: 44px;
+  padding: 8px 10px;
+  max-width: 100%;
+  min-width: 0;
+}
+.enemy-card select:focus-visible {
+  outline: 3px solid #9674aa;
+  outline-offset: 2px;
+}
+.enemy-card form button {
+  margin-top: 6px;
+  background: #e2d6e9;
+}
+.enemy-card .enemy-active-settings {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .enemy-card {
+    grid-column: 1/-1;
+  }
+  .enemy-card form {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .enemy-card label {
+    grid-row: 1;
+  }
+  .enemy-card select {
+    grid-row: 2;
+    width: 100%;
+  }
+  .enemy-card form button {
+    grid-column: 1/-1;
+    grid-row: 3;
+  }
+  .scene {
+    inset-inline: 0;
+  }
+  .destination {
+    min-height: 64px;
+  }
+  .destination-label {
+    font-size: 12px;
+  }
+  .destination-label small {
+    font-size: 10px;
+  }
+  .item-list button,
+  .camera-controls button,
+  .text-button,
+  .reset-button,
+  .remaining-items summary,
+  .live-control button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .item-list button {
+    font-size: 13px;
+    padding: 10px 14px;
+  }
+  .remaining-items summary {
+    padding-block: 10px;
+  }
+  .live-control button {
+    font-size: 12px;
+  }
+}
+@media (pointer: coarse) {
+  button,
+  select,
+  summary {
+    min-block-size: 44px;
+    min-inline-size: 44px;
   }
 }

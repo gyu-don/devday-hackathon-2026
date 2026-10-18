@@ -2,8 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room } from "./room.ts";
 import { ProController } from "./pro-controller.ts";
 import { LiveJudge } from "./live-judge.ts";
+import { EnemyDirector } from "./enemy-director.ts";
 import type { CSSProperties } from "react";
-import { assessmentSchema } from "@devday/contracts";
+import {
+  assessmentSchema,
+  enemyEfforts,
+  enemyModels,
+  enemySettingsSchema,
+} from "@devday/contracts";
+import type { EnemySettings } from "@devday/contracts";
 import { destinations } from "./types.ts";
 import type { Assessment, Category, RoomState } from "./types.ts";
 
@@ -55,6 +62,18 @@ export function App() {
   const comboRef = useRef({ count: 0, lastAt: 0 });
   const comboTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const burstTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestState = useRef<RoomState>({ items: [], selected: null, ready: false });
+  const enemyRemaining = useRef(5);
+  const [enemyEnabled, setEnemyEnabled] = useState(false);
+  const [enemySettings, setEnemySettings] = useState<EnemySettings>({
+    model: "gpt-6-luna",
+    effort: "low",
+  });
+  const [enemyRound, setEnemyRound] = useState(0);
+  const [enemyLeft, setEnemyLeft] = useState(5);
+  const [enemyMessage, setEnemyMessage] = useState(
+    "片付けた物を、こっそり床に戻すおばけ。出現させてみる？",
+  );
   const [state, setState] = useState<RoomState>({ items: [], selected: null, ready: false });
   const [started, setStarted] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -73,11 +92,45 @@ export function App() {
   const [controllerMessage, setControllerMessage] = useState<string | null>(null);
   const [controllerConnected, setControllerConnected] = useState(false);
   const [controllerConnecting, setControllerConnecting] = useState(false);
+  latestState.current = state;
   const sorted = state.items.filter((item) => item.stored).length;
   const total = state.items.length;
   const complete = total > 0 && sorted === total;
   const selected = state.items.find((item) => item.id === state.selected);
   const progress = total ? Math.round((sorted / total) * 100) : 0;
+
+  useEffect(() => {
+    room.current?.setEnemyVisible(enemyEnabled);
+    const canStart = enemyEnabled && state.ready && !complete && enemyRemaining.current > 0;
+    if (!canStart) return;
+    setEnemyMessage("ちらかしが出現！12秒ごとに、次のいたずらを考えます。");
+    const director = new EnemyDirector(
+      enemySettings,
+      () => ({ items: latestState.current.items, combo: comboRef.current.count }),
+      (itemId, quip, remaining) => {
+        enemyRemaining.current = remaining;
+        setEnemyLeft(remaining);
+        const scattered = room.current?.scatter(itemId);
+        if (!scattered) return;
+        version.current += 1;
+        liveQueue.current?.request();
+        const label = latestState.current.items.find((item) => item.id === itemId)?.label ?? "物";
+        const note =
+          remaining === 0
+            ? "いたずらはおしまい。全部戻せばクリア！"
+            : `あと${remaining}回のいたずら。`;
+        setEnemyMessage(`「${quip}」 ${label}を散らかした！ ${note}`);
+        setMessage(`ちらかしが ${label} を床に戻しました。もう一度、居場所へ。`);
+      },
+      setEnemyMessage,
+      (message) => {
+        setEnemyMessage(message);
+        setEnemyEnabled(false);
+      },
+      enemyRemaining.current,
+    );
+    return () => director.dispose();
+  }, [enemyEnabled, enemySettings, enemyRound, state.ready, complete]);
 
   useEffect(() => {
     const queue = new LiveJudge(() => judgeRef.current());
@@ -188,7 +241,9 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isTyping =
-        event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement;
       if (isTyping || event.repeat) return;
       const destination = destinations.find((candidate) => candidate.key === event.key);
       if (destination) {
@@ -201,6 +256,10 @@ export function App() {
   }, [store]);
 
   const reset = () => {
+    setEnemyMessage("片付けた物を、こっそり床に戻すおばけ。出現させてみる？");
+    enemyRemaining.current = 5;
+    setEnemyLeft(5);
+    setEnemyRound((previous) => previous + 1);
     version.current += 1;
     room.current?.reset();
     setStarted(null);
@@ -349,6 +408,63 @@ export function App() {
             </p>
           </aside>
         )}
+
+        <section className="enemy-card" aria-labelledby="enemy-title">
+          <div className="enemy-heading">
+            <h2 id="enemy-title">いたずらおばけ、ちらかし</h2>
+            <button
+              type="button"
+              role="switch"
+              aria-label="散らかす敵"
+              aria-checked={enemyEnabled}
+              disabled={!state.ready || complete || enemyLeft === 0}
+              onClick={() => setEnemyEnabled(!enemyEnabled)}
+            >
+              {enemyEnabled ? "出現中 · 止める" : "敵を出現させる"}
+            </button>
+          </div>
+          <p>片付けた物を1個ずつ床へ。最大5回、片付け切ればあなたの勝ち。</p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              const settings = enemySettingsSchema.parse({
+                model: form.get("model"),
+                effort: form.get("effort"),
+              });
+              setEnemySettings(settings);
+            }}
+          >
+            <label htmlFor="enemy-model">Codex モデル</label>
+            <select id="enemy-model" name="model" defaultValue={enemySettings.model}>
+              {enemyModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="enemy-effort">Reasoning effort</label>
+            <select id="enemy-effort" name="effort" defaultValue={enemySettings.effort}>
+              {enemyEfforts.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
+            <button type="submit">設定を反映</button>
+          </form>
+          <p className="enemy-active-settings">
+            適用中: {enemySettings.model} / {enemySettings.effort} · 残り{enemyLeft}回
+          </p>
+          <p role="status">
+            {complete && enemyEnabled
+              ? "ちらかしより早く、全部片付けた！あなたの勝ち。"
+              : enemyMessage}
+          </p>
+          <small>
+            ON の間、部屋の物の状態を OpenAI Agents API に送ります。非表示のタブでは休憩します。
+          </small>
+        </section>
 
         <div className="game-layout">
           <section className="room-panel" aria-label="片づける部屋">

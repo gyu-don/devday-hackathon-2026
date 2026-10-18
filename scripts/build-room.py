@@ -440,6 +440,28 @@ for side in [-1, 1]:
     )
 sphere("Chest heart", (0, 0.735, 0.17), (0.04, 0.045, 0.022), "cream", doll)
 
+M["dust"] = material("Lilac dust", (0.61, 0.46, 0.70))
+enemy = empty("enemy_chirakashi", (2.8, 0.75, 2.6), kind="enemy")
+sphere("Dust body", (0, 0, 0), (0.48, 0.40, 0.43), "dust", enemy)
+for index in range(9):
+    angle = index * math.tau / 9
+    sphere(
+        "Dust fluff",
+        (math.cos(angle) * 0.4, math.sin(angle) * 0.29, -0.04),
+        (0.18, 0.18, 0.18),
+        "dust",
+        enemy,
+    )
+for side in [-1, 1]:
+    sphere(
+        "Dust eye white", (side * 0.17, 0.09, 0.36), (0.115, 0.14, 0.06), "paper", enemy
+    )
+    sphere(
+        "Dust pupil", (side * 0.17, 0.07, 0.415), (0.048, 0.065, 0.025), "dark", enemy
+    )
+    sphere("Dust foot", (side * 0.25, -0.35, 0.14), (0.16, 0.09, 0.20), "dust", enemy)
+sphere("Mischievous smile", (0, -0.15, 0.39), (0.14, 0.065, 0.035), "dark", enemy)
+
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 bpy.ops.export_scene.gltf(
     filepath=str(OUTPUT),

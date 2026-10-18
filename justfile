@@ -40,6 +40,6 @@ deploy-worker:
 build-models blender='blender':
     {{ quote(blender) }} --background --python-exit-code 1 --python scripts/build-room.py
 
-# 診断 API とプロコン入力のテストを実行する
+# 診断 API・敵の行動・プロコン入力のテストを実行する
 test-game:
     pnpm test

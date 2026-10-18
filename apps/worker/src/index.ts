@@ -1,4 +1,5 @@
 import { assess } from "./assess.ts";
+import { enemy } from "./enemy.ts";
 
 export default {
   fetch(request, env) {
@@ -15,6 +16,8 @@ export default {
 
     const isAssessment = path === "/api/assess";
     if (isAssessment) return assess(request, env, requestId);
+    const isEnemy = path === "/api/enemy";
+    if (isEnemy) return enemy(request, env, requestId);
     const isHealth = path === "/api/health";
     if (!isHealth) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json({ status: "ok" }, { headers: { "x-request-id": requestId } });

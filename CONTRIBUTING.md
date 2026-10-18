@@ -4,6 +4,78 @@
 
 ## 開発準備
 
+### mise を使う場合（任意）
+
+mise は必須ではありません。既に Node.js 24、pnpm、just が使える場合は、
+「依存パッケージのインストール」へ進んでください。
+
+[mise の公式手順](https://mise.jdx.dev/getting-started.html)で mise を導入した後、
+リポジトリのルートで次を実行します。Windows のメンバーは WSL の Ubuntu 24.04 内で実行してください。
+
+```sh
+mise trust .mise.toml
+mise install
+mise exec -- just install-deps
+```
+
+`.mise.toml` で Node.js 24、pnpm 10.34.7、just 1.58.0 を指定しています。
+pnpm を更新するときは、`package.json` の `packageManager`・`engines.pnpm` と
+`.mise.toml` のバージョンを揃えてください。
+
+以降のコマンドも `mise exec -- just dev-worker` のように実行できます。
+シェルで [mise activate](https://mise.jdx.dev/cli/activate.html) を設定済みなら、
+`just dev-worker` のように直接実行できます。
+mise でツールを導入した場合、以下の OS 別の just 導入手順は不要です。
+
+### just の導入
+
+今回は Nix を使いません。
+
+**macOS**
+
+Cargo で `just` をインストールします。
+Cargo がない場合は、先に [rustup の公式手順](https://www.rust-lang.org/tools/install)で
+Rust と Cargo を導入し、ターミナルを開き直してください。
+
+```sh
+cargo install --locked just
+just --version
+```
+
+**Linux**
+
+ディストリビューションのパッケージマネージャーでインストールできます。
+
+| ディストリビューション             | コマンド                                   |
+| ---------------------------------- | ------------------------------------------ |
+| Ubuntu 24.04 以降 / Debian 13 以降 | `sudo apt update && sudo apt install just` |
+| Fedora                             | `sudo dnf install just`                    |
+| Arch Linux                         | `sudo pacman -S just`                      |
+| openSUSE                           | `sudo zypper install just`                 |
+| Alpine Linux                       | `sudo apk add just`                        |
+
+パッケージが見つからない場合や管理者権限がない場合は、上記 macOS と同じ
+Rust / Cargo の手順で `cargo install --locked just` を実行してください。
+インストール後は `just --version` で確認します。
+対応状況は [just 公式のパッケージ一覧](https://just.systems/man/en/packages.html)を参照してください。
+
+**Windows（WSL / Ubuntu 24.04）**
+
+WSL の Ubuntu 24.04 ターミナルでインストールします。
+
+```sh
+sudo apt update
+sudo apt install just
+just --version
+```
+
+Node.js 24、pnpm、Git も WSL 内に用意し、リポジトリの取得・依存パッケージのインストール・
+Wrangler の起動を含む以降の作業は、すべて WSL 内で実行します。
+
+導入方法の詳細は [just の公式インストールガイド](https://just.systems/man/en/installation.html)を参照してください。
+
+### 依存パッケージのインストール
+
 Node.js 24、pnpm、just を用意して、次を実行します。pnpm のバージョンは
 `package.json` の `packageManager` で 10.34.7 に固定しています。
 

@@ -41,7 +41,7 @@ export function DuelArena(props: Props) {
   const [view, setView] = useState(emptyDuelScore());
   const [state, setState] = useState<RoomState>({ items: [], selected: null, ready: false });
   const [note, setNote] = useState("部屋を準備しています…");
-  const [deviceNote, setDeviceNote] = useState("USBプロコンにも対応");
+  const [deviceNote, setDeviceNote] = useState("Switch ProCon1（USB接続）に対応");
   const [connected, setConnected] = useState(false);
   const [decision, setDecision] = useState<AutoDecision | null>(null);
   const human = props.side === "human";
@@ -324,7 +324,7 @@ export function DuelArena(props: Props) {
     try {
       await device.connect();
     } catch {
-      setDeviceNote("ChromeでUSBプロコンを選択してください。");
+      setDeviceNote("ChromeでSwitch ProCon1を選択してください。");
     }
   };
   const selected = state.items.find((item) => item.id === state.selected);
@@ -430,9 +430,9 @@ export function DuelArena(props: Props) {
           </div>
           <small>床クリック・WASDで移動。置き先を選ぶと、取りに行って運びます。</small>
           <details>
-            <summary>USBプロコン1で遊ぶ</summary>
+            <summary>Switch ProCon1で遊ぶ</summary>
             <button onClick={() => void connect()} disabled={!state.ready}>
-              {connected ? "プロコンを切断" : "USBプロコンを接続"}
+              {connected ? "Switch ProCon1を切断" : "Switch ProCon1を接続"}
             </button>
             <p>{deviceNote}</p>
             <small>スティックで照準、Aで選択・配置、Xで足元へ。ZR＋ジャイロで物を回転。</small>

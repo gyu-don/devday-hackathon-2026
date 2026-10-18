@@ -69,7 +69,9 @@ export class ProController {
   async connect() {
     const hid = (navigator as Navigator & { hid?: HidApi }).hid;
     if (!hid)
-      throw new Error("プロコン操作はデスクトップ版 Chrome の HTTPS または localhost で使えます。");
+      throw new Error(
+        "Switch ProCon1操作はデスクトップ版 Chrome の HTTPS または localhost で使えます。",
+      );
     const [device] = await hid.requestDevice({
       filters: [{ vendorId: 0x057e, productId: 0x2009 }],
     });
@@ -77,7 +79,7 @@ export class ProController {
     this.device = device;
     try {
       if (!device.opened) await device.open();
-      this.onStatus("プロコンを初期化しています…", false);
+      this.onStatus("Switch ProCon1を初期化しています…", false);
       // USB handshakes are required; Bluetooth-only setup leaves the Pro Controller asleep.
       for (const command of [0x01, 0x02, 0x03, 0x02]) {
         const bytes = new Uint8Array(63);
@@ -105,7 +107,7 @@ export class ProController {
         (event) => {
           const isOurs = "device" in event && event.device === device;
           if (!isOurs) return;
-          this.onStatus("プロコンが外れました。マウス・タッチ操作を続けられます。", false);
+          this.onStatus("Switch ProCon1が外れました。マウス・タッチ操作を続けられます。", false);
           void this.disconnect();
         },
         { signal: this.abort.signal },
@@ -115,7 +117,7 @@ export class ProController {
         const timedOut = performance.now() - this.lastReport > 3000;
         if (!timedOut) return;
         this.onStatus(
-          "プロコンの入力が止まりました。USB ケーブルを確認して再接続してください。",
+          "Switch ProCon1の入力が止まりました。USB ケーブルを確認して再接続してください。",
           false,
         );
         void this.disconnect();

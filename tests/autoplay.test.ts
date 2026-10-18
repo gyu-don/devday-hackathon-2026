@@ -10,7 +10,7 @@ const move = {
   point: { x: 0, y: 0.7, z: 0 },
 };
 const image = "data:image/jpeg;base64,/9j/2Q==";
-const input = { ...config, image, moves: [move], history: [] };
+const input = { ...config, image, moves: [move], history: [], tidyProbability: 0.2 };
 const request = (body: unknown = input, headers: Record<string, string> = {}) =>
   new Request("http://localhost/api/autoplay", {
     method: "POST",
@@ -179,25 +179,33 @@ describe("自動配置 API", () => {
 
 function setup(fetcher: typeof fetch) {
   vi.useFakeTimers();
-  const state = { version: 1, complete: false, ready: true, visible: true };
-  const moves = Array.from({ length: 12 }, (_, index) => ({ ...move, id: `m${index}` }));
-  const act = vi.fn(() => true);
+  const state = { version: 1, complete: false, ready: true, visible: true, probability: 0.05 };
+  const moves = Array.from({ length: 70 }, (_, index) => ({ ...move, id: `m${index}` }));
+  const act = vi.fn<(action: typeof move, signal: AbortSignal) => boolean | Promise<boolean>>(
+    () => true,
+  );
   const status = vi.fn();
   const end = vi.fn();
+  const progress = vi.fn();
   const player = new AutoPlayer(
     config,
     {
-      frame: () => (state.ready ? { version: state.version, image, moves } : null),
+      frame: () =>
+        state.ready
+          ? { version: state.version, image, moves, tidyProbability: state.probability }
+          : null,
       version: () => state.version,
       complete: () => state.complete,
+      probability: () => state.probability,
       visible: () => state.visible,
       act,
       status,
       end,
+      progress,
     },
     fetcher,
   );
-  return { state, moves, act, status, end, player };
+  return { state, moves, act, status, end, player, progress };
 }
 
 describe("自動配置のループ", () => {
@@ -218,6 +226,29 @@ describe("自動配置のループ", () => {
     expect(act).not.toHaveBeenCalled();
     expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
   });
+  it("歩行と配置の完了を待ち、行動中は次の推論を始めず、停止で歩行を中断する", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => Response.json({ action: "m0" }));
+    const { act, player, progress } = setup(fetcher);
+    let finish!: (success: boolean) => void;
+    let walkingSignal!: AbortSignal;
+    act.mockImplementation((_move, signal) => {
+      walkingSignal = signal;
+      return new Promise<boolean>((resolve) => {
+        finish = resolve;
+      });
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ turns: 0 }));
+    player.dispose();
+    expect(walkingSignal.aborted).toBe(true);
+    finish(false);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ turns: 0 }));
+  });
   it("手動操作や敵で状態が変わったら古い行動を捨てて停止する", async () => {
     let finish!: (response: Response) => void;
     const fetcher = vi.fn<typeof fetch>().mockImplementation(
@@ -235,6 +266,27 @@ describe("自動配置のループ", () => {
     expect(end).toHaveBeenCalledOnce();
     player.dispose();
   });
+  it("判断中に最新画像でクリアしたら追加配置せず、クリアとして終わる", async () => {
+    let finish!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { state, act, progress, player } = setup(fetcher);
+    await vi.advanceTimersByTimeAsync(0);
+    state.complete = true;
+    state.probability = 0.82;
+    state.version += 1;
+    finish(Response.json({ action: "m0" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(act).not.toHaveBeenCalled();
+    expect(progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "clear", bestProbability: 0.82 }),
+    );
+    player.dispose();
+  });
   it("物理・判定待ちと非表示中は推論せず、非表示で終了する", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const { state, end, player } = setup(fetcher);
@@ -246,19 +298,93 @@ describe("自動配置のループ", () => {
     expect(end).toHaveBeenCalledOnce();
     player.dispose();
   });
-  it("最大10手で停止し、操作間隔を空け、同じ候補を再実行しない", async () => {
+  it("改善中は10手を超えて継続し、最新画像のクリアを待って止まる", async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, options) => {
       const body = JSON.parse(String(options?.body));
       return Response.json({ action: body.moves[0].id });
     });
-    const { act, end, player } = setup(fetcher);
+    const { state, act, end, player, progress } = setup(fetcher);
+    act.mockImplementation(() => {
+      state.probability += 0.02;
+      return true;
+    });
     await vi.advanceTimersByTimeAsync(4999);
     expect(act).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(60000);
-    expect(act).toHaveBeenCalledTimes(10);
+    await vi.advanceTimersByTimeAsync(50000);
+    expect(act).toHaveBeenCalledTimes(11);
+    expect(end).not.toHaveBeenCalled();
+    state.complete = true;
+    state.probability = 0.82;
+    await vi.advanceTimersByTimeAsync(5000);
     expect(end).toHaveBeenCalledOnce();
-    expect(new Set(act.mock.calls.map((call) => call[0].id)).size).toBe(10);
-    expect(fetcher).toHaveBeenCalledTimes(10);
+    expect(new Set(act.mock.calls.map((call) => call[0].id)).size).toBe(11);
+    expect(fetcher).toHaveBeenCalledTimes(11);
+    expect(progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "clear", turns: 11, bestProbability: 0.82 }),
+    );
+    const requests = fetcher.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    expect(requests[1].history[0]).toContain("5% → 7%");
+    expect(requests.every((body) => body.history.length <= 10)).toBe(true);
+    player.dispose();
+  });
+  it("8手停滞は未クリアで停止し、残りの物をクリア扱いにしない", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      return Response.json({ action: body.moves[0].id });
+    });
+    const { act, end, player, progress } = setup(fetcher);
+    await vi.advanceTimersByTimeAsync(100000);
+    expect(act).toHaveBeenCalledTimes(8);
+    expect(end).toHaveBeenCalledOnce();
+    expect(progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "unfinished", stagnant: 8 }),
+    );
+    player.dispose();
+  });
+  it("小幅の改善も積算して評価し、改善中の8手を停滞とみなさない", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      return Response.json({ action: body.moves[0].id });
+    });
+    const { state, act, end, player } = setup(fetcher);
+    act.mockImplementation(() => {
+      state.probability += 0.005;
+      return true;
+    });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(act).toHaveBeenCalledTimes(13);
+    expect(end).not.toHaveBeenCalled();
+    player.dispose();
+  });
+  it("未クリアでstopが返ったら考え直し、3回連続で案がなければ中断する", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => Response.json({ action: "stop" }));
+    const { act, end, player, progress } = setup(fetcher);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(end).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(act).not.toHaveBeenCalled();
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "unfinished" }));
+    player.dispose();
+  });
+  it("改善していても自動判断60回の予算を超えて推論せず、未クリアと表示する", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      return Response.json({ action: body.moves[0].id });
+    });
+    const { state, act, player, progress } = setup(fetcher);
+    act.mockImplementation(() => {
+      state.probability += 0.011;
+      return true;
+    });
+    await vi.advanceTimersByTimeAsync(400000);
+    expect(fetcher).toHaveBeenCalledTimes(60);
+    expect(progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "unfinished", requests: 60 }),
+    );
     player.dispose();
   });
   it("クリア後とエラー後は追加リクエストを送らない", async () => {
@@ -275,5 +401,36 @@ describe("自動配置のループ", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(fetcher).toHaveBeenCalledOnce();
     second.player.dispose();
+  });
+  it("開発サーバーの503や途中切断では最新フレームで再接続し、停止後は再試行しない", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("Your worker restarted", { status: 503 }))
+      .mockResolvedValueOnce(new Response("interrupted"))
+      .mockResolvedValueOnce(Response.json({ action: "m0" }));
+    const { state, act, end, player } = setup(fetcher);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(act).not.toHaveBeenCalled();
+    expect(end).not.toHaveBeenCalled();
+    state.version += 1;
+    state.probability = 0.4;
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(act).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(String(fetcher.mock.calls[2]![1]?.body)).tidyProbability).toBe(0.4);
+    player.dispose();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+  it("接続の再試行は2回までに制限し、再接続できなければ未クリアで終了する", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => new Response("restarting", { status: 503 }));
+    const { end, progress, player } = setup(fetcher);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(end).toHaveBeenCalledOnce();
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "unfinished" }));
+    player.dispose();
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { enemyEfforts, enemyModels, enemySettingsSchema } from "@devday/contracts";
 import type { AutoMove, EnemySettings } from "@devday/contracts";
+import type { AutoProgress } from "./autoplay.ts";
 import type { Room } from "./room.ts";
 import { AutoPlayer } from "./autoplay.ts";
 
@@ -12,6 +13,7 @@ type Props = {
   assessedVersion: number;
   version: RefObject<number>;
   complete: boolean;
+  tidyProbability: number;
   onStart: () => void;
   onAction: () => void;
   stopRef: RefObject<() => void>;
@@ -26,6 +28,7 @@ export function AutoPlayPanel(props: Props) {
   const [mode, setMode] = useState<"decisions" | "agents">("decisions");
   const [settings, setSettings] = useState<EnemySettings>({ model: "gpt-6-luna", effort: "low" });
   const [message, setMessage] = useState("AI に画像を見せて、片付けを任せてみよう。");
+  const [progress, setProgress] = useState<AutoProgress | null>(null);
 
   const stop = () => {
     const current = director.current;
@@ -35,6 +38,7 @@ export function AutoPlayPanel(props: Props) {
     director.current = null;
     latest.current.room.current?.stopPlayer();
     setRunning(false);
+    setProgress((previous) => (previous ? { ...previous, phase: "unfinished" } : null));
     setMessage("自動操作を停止しました。手動で操作できます。");
   };
   props.stopRef.current = stop;
@@ -54,21 +58,29 @@ export function AutoPlayPanel(props: Props) {
             !current.judging &&
             current.assessedVersion === current.version.current;
           if (!ready || !room) return null;
-          return { version: current.version.current, ...room.autoPlan() };
+          return {
+            version: current.version.current,
+            tidyProbability: current.tidyProbability,
+            ...room.autoPlan(),
+          };
         },
         version: () => latest.current.version.current,
         complete: () => latest.current.complete,
+        probability: () => latest.current.tidyProbability,
         visible: () => !document.hidden,
-        act: (move: AutoMove) => {
+        act: async (move: AutoMove, signal) => {
           const room = latest.current.room.current;
           if (!room) return false;
-          room.select(move.itemId);
-          const success = room.place(move.point);
+          const arrived = await room.approachItem(move.itemId, signal);
+          const allowed = arrived && !signal.aborted;
+          if (!allowed) return false;
+          const success = await room.deliver(move.point, signal);
           if (success) latest.current.onAction();
           return success;
         },
         status: setMessage,
         end: () => setRunning(false),
+        progress: setProgress,
       },
     );
     director.current = player;
@@ -96,7 +108,7 @@ export function AutoPlayPanel(props: Props) {
   return (
     <div className="autoplay-card" ref={panel}>
       <div className="enemy-heading">
-        <h2>AI に、片付けをおまかせ</h2>
+        <h2>AI 片付けチャレンジ</h2>
         <button
           type="button"
           disabled={!running && (!props.ready || props.complete)}
@@ -106,61 +118,89 @@ export function AutoPlayPanel(props: Props) {
               return;
             }
             props.onStart();
+            setProgress(null);
             setRunning(true);
           }}
         >
           {running ? "自動操作を停止" : "自動操作を開始"}
         </button>
       </div>
-      <label htmlFor="autoplay-mode">操作を決める API</label>
-      <select
-        id="autoplay-mode"
-        value={mode}
-        disabled={running}
-        onChange={(event) => setMode(event.target.value === "agents" ? "agents" : "decisions")}
-      >
-        <option value="decisions">Decisions API · 画像から候補を選択</option>
-        <option value="agents">Agents API · 画像と状態から判断</option>
-      </select>
-      {mode === "agents" && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const form = new FormData(event.currentTarget);
-            setSettings(
-              enemySettingsSchema.parse({ model: form.get("model"), effort: form.get("effort") }),
-            );
-          }}
+      <p>ミッション：画像判定80%を目指そう。AIは配置の結果を振り返り、次の一手を変えます。</p>
+      <details className="autoplay-settings">
+        <summary>
+          AIの作戦設定 ·{" "}
+          {mode === "decisions" ? "Decisions" : `${settings.model} / ${settings.effort}`}
+        </summary>
+        <label htmlFor="autoplay-mode">操作を決める API</label>
+        <select
+          id="autoplay-mode"
+          value={mode}
+          disabled={running}
+          onChange={(event) => setMode(event.target.value === "agents" ? "agents" : "decisions")}
         >
-          <label htmlFor="autoplay-model">自動操作のモデル</label>
-          <select id="autoplay-model" name="model" disabled={running} defaultValue={settings.model}>
-            {enemyModels.map((model) => (
-              <option key={model}>{model}</option>
-            ))}
-          </select>
-          <label htmlFor="autoplay-effort">自動操作の effort</label>
-          <select
-            id="autoplay-effort"
-            name="effort"
-            disabled={running}
-            defaultValue={settings.effort}
+          <option value="decisions">Decisions API · 画像から候補を選択</option>
+          <option value="agents">Agents API · 画像と状態から判断</option>
+        </select>
+        {mode === "agents" && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              setSettings(
+                enemySettingsSchema.parse({ model: form.get("model"), effort: form.get("effort") }),
+              );
+            }}
           >
-            {enemyEfforts.map((effort) => (
-              <option key={effort}>{effort}</option>
-            ))}
-          </select>
-          <button type="submit" disabled={running}>
-            自動操作の設定を反映
-          </button>
-          <small>
-            適用中: {settings.model} / {settings.effort}
-          </small>
-        </form>
-      )}
+            <label htmlFor="autoplay-model">自動操作のモデル</label>
+            <select
+              id="autoplay-model"
+              name="model"
+              disabled={running}
+              defaultValue={settings.model}
+            >
+              {enemyModels.map((model) => (
+                <option key={model}>{model}</option>
+              ))}
+            </select>
+            <label htmlFor="autoplay-effort">自動操作の effort</label>
+            <select
+              id="autoplay-effort"
+              name="effort"
+              disabled={running}
+              defaultValue={settings.effort}
+            >
+              {enemyEfforts.map((effort) => (
+                <option key={effort}>{effort}</option>
+              ))}
+            </select>
+            <button type="submit" disabled={running}>
+              自動操作の設定を反映
+            </button>
+            <small>
+              適用中: {settings.model} / {settings.effort}
+            </small>
+          </form>
+        )}
+      </details>
       <p role="status">{message}</p>
+      {progress && (
+        <div className="autoplay-progress" aria-label="AIチャレンジの記録">
+          <span>{progress.turns}手</span>
+          <span>最高 {Math.round(progress.bestProbability * 100)}%</span>
+          <span>判断 {progress.requests}/60回</span>
+          <strong>
+            {progress.phase === "clear"
+              ? "CLEAR!"
+              : progress.phase === "unfinished"
+                ? "未クリアで中断"
+                : "挑戦中"}
+          </strong>
+        </div>
+      )}
       <small>
-        1回につき最大10手。画像と操作候補を OpenAI
-        に送り、配置後は物理と画像判定を待ちます。手動操作・タブ非表示で停止します。
+        10手では止まらず、クリアまで改善を試します。8手停滞・改善案なし3回・判断60回・通信エラーで未クリアのまま中断。
+        画像・候補・判定履歴を OpenAI
+        に送信。配置後は物理と画像判定を待ち、手動操作・タブ非表示で停止します。
       </small>
     </div>
   );

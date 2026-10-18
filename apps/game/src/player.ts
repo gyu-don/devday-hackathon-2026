@@ -30,6 +30,10 @@ export class Resident {
     this.path = findWalkPath(this.object.position, target);
   }
 
+  isWalking() {
+    return this.path.length > 0 || this.moving;
+  }
+
   step(x: number, z: number, cameraAngle: number) {
     const length = Math.hypot(x, z);
     const hasDirection = length > 0;

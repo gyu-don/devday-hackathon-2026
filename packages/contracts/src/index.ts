@@ -62,6 +62,7 @@ export const autoRequestSchema = enemySettingsSchema.extend({
   image: assessmentRequestSchema.shape.image,
   moves: z.array(autoMoveSchema).min(1).max(200),
   history: z.array(z.string().max(400)).max(10),
+  tidyProbability: z.number().min(0).max(1),
 });
 export const autoResultSchema = z.object({ action: z.string().min(1).max(100) });
 export type AutoMove = z.infer<typeof autoMoveSchema>;

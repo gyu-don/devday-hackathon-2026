@@ -51,6 +51,9 @@ export class Room {
   private floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.06);
   private physics: RoomPhysics | null = null;
   private rotating = false;
+  private interactive = true;
+  private loaded = false;
+  private carrying: { id: string; object: THREE.Object3D; pickedUp: boolean } | null = null;
 
   constructor(
     host: HTMLElement,
@@ -135,6 +138,8 @@ export class Room {
     canvas.addEventListener(
       "pointerdown",
       (event) => {
+        const canInteract = this.interactive && !this.carrying;
+        if (!canInteract) return;
         const isPrimary = event.isPrimary && event.button === 0;
         if (!isPrimary) return;
         pressed = { id: event.pointerId, x: event.clientX, y: event.clientY };
@@ -151,6 +156,8 @@ export class Room {
     canvas.addEventListener(
       "pointerup",
       (event) => {
+        const canInteract = this.interactive && !this.carrying;
+        if (!canInteract) return;
         const isTap =
           pressed?.id === event.pointerId &&
           Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 10;
@@ -183,6 +190,8 @@ export class Room {
           target instanceof HTMLElement &&
           (target.isContentEditable || target.matches("input,textarea,select,button,summary"));
         const isMovement =
+          this.interactive &&
+          !this.carrying &&
           movementKeys.has(event.code) &&
           !isEditing &&
           !event.ctrlKey &&
@@ -284,6 +293,7 @@ export class Room {
               return;
             }
             this.physics = physics;
+            this.loaded = true;
             this.emit();
           })
           .catch(() => onError());
@@ -296,6 +306,15 @@ export class Room {
       const now = performance.now();
       this.physics?.update(now);
       this.resident?.update(now, 0.65 + this.angle, this.reducedMotion.matches);
+      const carried = this.carrying;
+      const player = this.playerObject;
+      if (carried?.pickedUp && player) {
+        carried.object.position.set(
+          player.position.x + Math.sin(player.rotation.y) * 0.4,
+          1.0,
+          player.position.z + Math.cos(player.rotation.y) * 0.4,
+        );
+      }
       this.moves = this.moves.filter((move) => {
         const progress = this.reducedMotion.matches ? 1 : Math.min((now - move.started) / 600, 1);
         const eased = 1 - (1 - progress) ** 3;
@@ -330,7 +349,7 @@ export class Room {
     this.onState({
       items: this.items.map((item) => ({ ...item })),
       selected: this.selected,
-      ready: true,
+      ready: this.loaded,
     });
   }
 
@@ -363,6 +382,7 @@ export class Room {
   }
 
   aim(x: number, y: number, activate: boolean) {
+    if (this.carrying) return;
     this.pointer.set(x, y);
     this.cursor.hidden = false;
     this.cursor.style.left = `${(x + 1) * 50}%`;
@@ -383,11 +403,18 @@ export class Room {
   }
 
   stepPlayer(x: number, z: number) {
+    if (this.carrying) return;
     this.resident?.step(x, z, 0.65 + this.angle);
   }
 
   stopPlayer() {
+    if (this.carrying) return;
     this.resident?.stop();
+  }
+
+  setInteractive(enabled: boolean) {
+    this.interactive = enabled;
+    if (!enabled) this.resident?.stop();
   }
 
   disableAim() {
@@ -395,6 +422,7 @@ export class Room {
   }
 
   select(id: string) {
+    if (this.carrying) return;
     const item = this.items.find((candidate) => candidate.id === id);
     const canSelect = Boolean(item);
     if (!canSelect) return;
@@ -409,6 +437,79 @@ export class Room {
     this.emit();
   }
 
+  approachItem(id: string, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return Promise.resolve(false);
+    this.select(id);
+    return this.waitForArrival(id, signal);
+  }
+
+  async deliver(point: Placement, signal: AbortSignal) {
+    const id = this.selected;
+    const object = id ? this.objects.get(id) : undefined;
+    const valid =
+      id &&
+      object &&
+      !this.carrying &&
+      !signal.aborted &&
+      Math.abs(point.x) <= 4.4 &&
+      Math.abs(point.z) <= 3.4 &&
+      point.y >= 0 &&
+      point.y <= 2.7;
+    if (!valid || !id || !object) return false;
+    const carried = { id, object, pickedUp: false };
+    this.carrying = carried;
+    this.onChanged();
+    const pickedUp = await this.waitForArrival(id, signal);
+    const canCarry = pickedUp && !signal.aborted && this.carrying === carried;
+    if (canCarry) {
+      carried.pickedUp = true;
+      this.resident?.walkTo(point);
+    }
+    const arrived = canCarry && (await this.waitForArrival(id, signal));
+    const same = this.carrying === carried;
+    if (!same) return false;
+    this.carrying = null;
+    const allowed = arrived && !signal.aborted;
+    if (!allowed) {
+      const origin = this.original.get(id);
+      if (origin) object.position.copy(origin.position);
+      return false;
+    }
+    return this.place(point);
+  }
+
+  private waitForArrival(id: string, signal: AbortSignal): Promise<boolean> {
+    return new Promise((resolve) => {
+      const started = performance.now();
+      const finish = (success: boolean) => {
+        clearInterval(timer);
+        signal.removeEventListener("abort", cancel);
+        resolve(success);
+      };
+      const cancel = () => {
+        this.resident?.stop();
+        finish(false);
+      };
+      const check = () => {
+        const invalid = this.disposed || this.selected !== id || signal.aborted;
+        if (invalid) {
+          cancel();
+          return;
+        }
+        const arrived = !this.resident?.isWalking();
+        if (arrived) {
+          finish(true);
+          return;
+        }
+        const timedOut = performance.now() - started > 20_000;
+        if (timedOut) cancel();
+      };
+      const timer = setInterval(check, 50);
+      signal.addEventListener("abort", cancel, { once: true });
+      check();
+    });
+  }
+
   private clearSelection() {
     this.finishRotation();
     const previous = this.selected ? this.objects.get(this.selected) : undefined;
@@ -420,6 +521,7 @@ export class Room {
   }
 
   deselect() {
+    if (this.carrying) return;
     this.clearSelection();
     this.emit();
   }
@@ -444,7 +546,12 @@ export class Room {
   }
 
   isSettling() {
-    return this.rotating || this.moves.length > 0 || (this.physics?.isSettling() ?? false);
+    return (
+      this.carrying !== null ||
+      this.rotating ||
+      this.moves.length > 0 ||
+      (this.physics?.isSettling() ?? false)
+    );
   }
 
   place(point: Placement) {
@@ -639,6 +746,7 @@ export class Room {
   }
 
   reset() {
+    this.carrying = null;
     this.resident?.reset();
     this.enemyUntil = 0;
     if (this.enemy) this.enemy.position.set(2.8, 0.75, 2.6);

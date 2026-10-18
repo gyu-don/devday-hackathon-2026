@@ -4,6 +4,7 @@ import { ProController } from "./pro-controller.ts";
 import { LiveJudge } from "./live-judge.ts";
 import { EnemyDirector } from "./enemy-director.ts";
 import { AutoPlayPanel } from "./AutoPlayPanel.tsx";
+import { DuelGame } from "./DuelGame.tsx";
 import type { CSSProperties } from "react";
 import {
   assessmentSchema,
@@ -52,6 +53,19 @@ function formatTime(seconds: number) {
 }
 
 export function App() {
+  const [practice, setPractice] = useState(false);
+  if (!practice) return <DuelGame onPractice={() => setPractice(true)} />;
+  return (
+    <>
+      <button className="duel-return" onClick={() => setPractice(false)}>
+        ← AIとの対決へ戻る
+      </button>
+      <PracticeGame />
+    </>
+  );
+}
+
+function PracticeGame() {
   const host = useRef<HTMLDivElement>(null);
   const room = useRef<Room | null>(null);
   const controller = useRef<ProController | null>(null);
@@ -488,6 +502,7 @@ export function App() {
           assessedVersion={assessmentVersion}
           version={version}
           complete={complete}
+          tidyProbability={assessment?.tidyProbability ?? 0}
           stopRef={stopAuto}
           onStart={() => {
             setEnemyEnabled(false);

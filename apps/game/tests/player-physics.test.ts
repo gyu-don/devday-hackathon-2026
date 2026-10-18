@@ -31,9 +31,11 @@ describe("操作キャラ", () => {
     model.add(leg);
     const actor = new Resident(model, vi.fn());
     actor.walkTo({ x: 2, z: 2.5 });
+    expect(actor.isWalking()).toBe(true);
     for (let t = 0; t < 1000; t += 16) actor.update(t, 0, false);
     expect(model.position.x).toBeGreaterThan(playerHome.x);
     actor.stop();
+    expect(actor.isWalking()).toBe(false);
     const stopped = model.position.clone();
     for (let t = 1000; t < 2000; t += 16) actor.update(t, 0, false);
     expect(model.position.distanceTo(stopped)).toBeLessThan(0.05);

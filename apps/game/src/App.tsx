@@ -392,7 +392,7 @@ function PracticeGame() {
       await controller.current?.disconnect();
       setControllerConnected(false);
       room.current?.disableAim();
-      setControllerMessage("プロコンの接続を終了しました。");
+      setControllerMessage("Switch ProCon1の接続を終了しました。");
       return;
     }
     setControllerConnecting(true);
@@ -427,7 +427,7 @@ function PracticeGame() {
     } catch (cause) {
       setControllerConnected(false);
       setControllerMessage(
-        cause instanceof Error ? cause.message : "プロコンに接続できませんでした。",
+        cause instanceof Error ? cause.message : "Switch ProCon1に接続できませんでした。",
       );
     } finally {
       setControllerConnecting(false);
@@ -835,7 +835,7 @@ function PracticeGame() {
                   傾ける
                 </button>
               </div>
-              <p className="ai-note">プロコンは ZR を押しながら傾けると回転</p>
+              <p className="ai-note">Switch ProCon1は ZR を押しながら傾けると回転</p>
               <button
                 className="text-button"
                 onClick={() => room.current?.deselect()}
@@ -930,7 +930,7 @@ function PracticeGame() {
         </details>
         <div className="controller-bar">
           <span>
-            <Icon name="controller" size={19} /> プロコンでも、ひと片づけ。
+            <Icon name="controller" size={19} /> Switch ProCon1でも、ひと片づけ。
           </span>
           <button
             className="text-button"
@@ -940,8 +940,8 @@ function PracticeGame() {
             {controllerConnecting
               ? "接続中…"
               : controllerConnected
-                ? "プロコンを切断"
-                : "USB プロコンを接続"}{" "}
+                ? "Switch ProCon1を切断"
+                : "Switch ProCon1を接続"}{" "}
             <Icon name="arrow" size={15} />
           </button>
           {controllerConnected && (
